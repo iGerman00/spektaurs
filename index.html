@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spek - Acoustic Spectrum Analyser</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <!-- Menu Bar -->
+    <nav class="menubar" id="menubar">
+      <div class="menu">
+        <span class="menu-title">File</span>
+        <div class="menu-dropdown">
+          <button data-action="open">Open…</button>
+          <button data-action="save">Save Spectrogram…</button>
+          <div class="separator"></div>
+          <button data-action="exit">Exit</button>
+        </div>
+      </div>
+      <div class="menu">
+        <span class="menu-title">Edit</span>
+        <div class="menu-dropdown">
+          <button data-action="preferences">Preferences…</button>
+        </div>
+      </div>
+      <div class="menu">
+        <span class="menu-title">Help</span>
+        <div class="menu-dropdown">
+          <button data-action="help">Help (F1)</button>
+          <button data-action="about">About… (Shift+F1)</button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Toolbar -->
+    <div class="toolbar" id="toolbar">
+      <button class="tool-btn" data-action="open" title="Open audio file">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        <span>Open</span>
+      </button>
+      <button class="tool-btn" data-action="save" title="Save spectrogram as PNG">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        <span>Save</span>
+      </button>
+      <div class="toolbar-spacer"></div>
+      <button class="tool-btn" data-action="help" title="Help">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span>Help</span>
+      </button>
+    </div>
+
+    <!-- Info Bar (update notification) -->
+    <div class="info-bar hidden" id="info-bar">
+      <span id="info-text" class="info-text">A new version of Spek is available, click to download.</span>
+      <button class="info-close" id="info-close" title="Close">✕</button>
+    </div>
+
+    <!-- Main Canvas Area -->
+    <main class="main" id="main">
+      <div class="canvas-container" id="canvas-container">
+        <canvas id="spectrogram"></canvas>
+        <div class="drop-overlay hidden" id="drop-overlay">Drop audio file here</div>
+        <div class="loading hidden" id="loading">
+          <div class="spinner"></div>
+          <span>Analysing…</span>
+        </div>
+      </div>
+      <div class="shortcuts-hint" id="hint">
+        Keys: <b>C</b>/Shift+<b>C</b> channel &nbsp; <b>S</b>/Shift+<b>S</b> stream &nbsp; <b>F</b>/Shift+<b>F</b> window &nbsp; <b>W</b>/Shift+<b>W</b> DFT size &nbsp; <b>P</b>/Shift+<b>P</b> palette &nbsp; <b>L</b>/Shift+<b>L</b> low &nbsp; <b>U</b>/Shift+<b>U</b> high
+      </div>
+    </main>
+
+    <!-- Preferences Dialog -->
+    <dialog id="prefs-dialog" class="dialog">
+      <form method="dialog">
+        <h2>Preferences</h2>
+        <div class="dialog-content">
+          <div class="section">
+            <div class="section-title">General</div>
+            <div class="field" id="language-field">
+              <label for="language-select">Language:</label>
+              <select id="language-select"></select>
+            </div>
+            <div class="field">
+              <label class="checkbox"><input type="checkbox" id="check-update" /> Check for updates</label>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button type="submit" value="ok">OK</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- About Dialog -->
+    <dialog id="about-dialog" class="dialog">
+      <form method="dialog">
+        <h2>About Spek</h2>
+        <div class="dialog-content about-content">
+          <div class="about-header">
+            <h3>Spek</h3>
+            <span id="about-version"></span>
+          </div>
+          <p id="about-desc">Acoustic Spectrum Analyser</p>
+          <p class="copyright" id="about-copyright"></p>
+          <p><a href="https://www.spek.cc/" class="link" data-open="https://www.spek.cc/">Spek Website</a></p>
+          <details>
+            <summary>Developers</summary>
+            <ul id="about-devs"></ul>
+          </details>
+          <details>
+            <summary>Artist</summary>
+            <p id="about-artist"></p>
+          </details>
+          <details>
+            <summary>Translators</summary>
+            <p>Add your name here — see <code>po/</code> in the source.</p>
+          </details>
+          <p class="license">License: GPL-2.0</p>
+        </div>
+        <div class="dialog-actions">
+          <button type="submit">Close</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Hidden -->
+    <div id="toast" class="toast hidden"></div>
+  </body>
+</html>
