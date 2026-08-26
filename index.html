@@ -11,25 +11,25 @@
     <!-- Menu Bar -->
     <nav class="menubar" id="menubar">
       <div class="menu">
-        <span class="menu-title">File</span>
+        <span class="menu-title" data-i18n="File">File</span>
         <div class="menu-dropdown">
-          <button data-action="open">Open…</button>
-          <button data-action="save">Save Spectrogram…</button>
+          <button data-action="open" data-i18n="Open…">Open…</button>
+          <button data-action="save" data-i18n="Save Spectrogram…">Save Spectrogram…</button>
           <div class="separator"></div>
-          <button data-action="exit">Exit</button>
+          <button data-action="exit" data-i18n="Exit">Exit</button>
         </div>
       </div>
       <div class="menu">
-        <span class="menu-title">Edit</span>
+        <span class="menu-title" data-i18n="Edit">Edit</span>
         <div class="menu-dropdown">
-          <button data-action="preferences">Preferences…</button>
+          <button data-action="preferences" data-i18n="Preferences…">Preferences…</button>
         </div>
       </div>
       <div class="menu">
-        <span class="menu-title">Help</span>
+        <span class="menu-title" data-i18n="Help">Help</span>
         <div class="menu-dropdown">
-          <button data-action="help">Help (F1)</button>
-          <button data-action="about">About… (Shift+F1)</button>
+          <button data-action="help" data-i18n="Help (F1)">Help (F1)</button>
+          <button data-action="about" data-i18n="About… (Shift+F1)">About… (Shift+F1)</button>
         </div>
       </div>
     </nav>
@@ -38,22 +38,22 @@
     <div class="toolbar" id="toolbar">
       <button class="tool-btn" data-action="open" title="Open audio file">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-        <span>Open</span>
+        <span data-i18n="Open">Open</span>
       </button>
       <button class="tool-btn" data-action="save" title="Save spectrogram as PNG">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-        <span>Save</span>
+        <span data-i18n="Save">Save</span>
       </button>
       <div class="toolbar-spacer"></div>
       <button class="tool-btn" data-action="help" title="Help">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-        <span>Help</span>
+        <span data-i18n="Help">Help</span>
       </button>
     </div>
 
     <!-- Info Bar (update notification) -->
     <div class="info-bar hidden" id="info-bar">
-      <span id="info-text" class="info-text">A new version of Spek is available, click to download.</span>
+      <span id="info-text" class="info-text" data-i18n="A new version of Spek is available, click to download.">A new version of Spek is available, click to download.</span>
       <button class="info-close" id="info-close" title="Close">✕</button>
     </div>
 
@@ -61,10 +61,10 @@
     <main class="main" id="main">
       <div class="canvas-container" id="canvas-container">
         <canvas id="spectrogram"></canvas>
-        <div class="drop-overlay hidden" id="drop-overlay">Drop audio file here</div>
+        <div class="drop-overlay hidden" id="drop-overlay" data-i18n="Drop an audio file here or use File → Open">Drop an audio file here or use File → Open</div>
         <div class="loading hidden" id="loading">
           <div class="spinner"></div>
-          <span>Analysing…</span>
+          <span data-i18n="Analysing…">Analysing…</span>
         </div>
       </div>
       <div class="shortcuts-hint" id="hint">
@@ -75,21 +75,21 @@
     <!-- Preferences Dialog -->
     <dialog id="prefs-dialog" class="dialog">
       <form method="dialog">
-        <h2>Preferences</h2>
+        <h2 data-i18n="Preferences">Preferences</h2>
         <div class="dialog-content">
           <div class="section">
-            <div class="section-title">General</div>
+            <div class="section-title" data-i18n="General">General</div>
             <div class="field" id="language-field">
-              <label for="language-select">Language:</label>
+              <label for="language-select" data-i18n="Language:">Language:</label>
               <select id="language-select"></select>
             </div>
             <div class="field">
-              <label class="checkbox"><input type="checkbox" id="check-update" /> Check for updates</label>
+              <label class="checkbox"><input type="checkbox" id="check-update" /> <span data-i18n="Check for updates">Check for updates</span></label>
             </div>
           </div>
         </div>
         <div class="dialog-actions">
-          <button type="submit" value="ok">OK</button>
+          <button type="submit" value="ok" data-i18n="OK">OK</button>
         </div>
       </form>
     </dialog>
@@ -97,31 +97,31 @@
     <!-- About Dialog -->
     <dialog id="about-dialog" class="dialog">
       <form method="dialog">
-        <h2>About Spek</h2>
+        <h2 data-i18n="About Spek">About Spek</h2>
         <div class="dialog-content about-content">
           <div class="about-header">
             <h3>Spek</h3>
             <span id="about-version"></span>
           </div>
-          <p id="about-desc">Acoustic Spectrum Analyser</p>
+          <p id="about-desc" data-i18n="Acoustic Spectrum Analyser">Acoustic Spectrum Analyser</p>
           <p class="copyright" id="about-copyright"></p>
-          <p><a href="https://www.spek.cc/" class="link" data-open="https://www.spek.cc/">Spek Website</a></p>
+          <p><a href="https://www.spek.cc/" class="link" data-open="https://www.spek.cc/" data-i18n="Spek Website">Spek Website</a></p>
           <details>
-            <summary>Developers</summary>
+            <summary data-i18n="Developers">Developers</summary>
             <ul id="about-devs"></ul>
           </details>
           <details>
-            <summary>Artist</summary>
+            <summary data-i18n="Artist">Artist</summary>
             <p id="about-artist"></p>
           </details>
           <details>
-            <summary>Translators</summary>
+            <summary data-i18n="Translators">Translators</summary>
             <p>Add your name here — see <code>po/</code> in the source.</p>
           </details>
-          <p class="license">License: GPL-2.0</p>
+          <p class="license" data-i18n="License: GPL-2.0">License: GPL-2.0</p>
         </div>
         <div class="dialog-actions">
-          <button type="submit">Close</button>
+          <button type="submit" data-i18n="Close">Close</button>
         </div>
       </form>
     </dialog>

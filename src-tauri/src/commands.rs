@@ -4,6 +4,7 @@ use crate::pipeline::{run_pipeline, SpectrogramResult};
 use crate::preferences::Preferences;
 use crate::utils::vercmp;
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 
 #[tauri::command]
 pub fn get_preferences() -> serde_json::Value {
@@ -47,8 +48,18 @@ pub struct AnalyzeParams {
     pub samples: Option<usize>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+struct ProgressPayload {
+    sample: usize,
+    bands: usize,
+    values: Vec<f32>,
+}
+
 #[tauri::command]
-pub fn analyze_audio(params: AnalyzeParams) -> Result<SpectrogramResult, String> {
+pub async fn analyze_audio(
+    window: tauri::Window,
+    params: AnalyzeParams,
+) -> Result<SpectrogramResult, String> {
     let stream = params.stream.unwrap_or(0);
     let channel = params.channel.unwrap_or(0);
     let wf_str = params.window_function.unwrap_or_else(|| "hann".to_string());
@@ -60,23 +71,50 @@ pub fn analyze_audio(params: AnalyzeParams) -> Result<SpectrogramResult, String>
         return Err(format!("fft_bits out of range 8..14: {}", fft_bits));
     }
 
-    // Open audio
-    let info = audio::open_audio_file(&params.path, stream);
-    if info.error != audio::AudioError::Ok && info.error != audio::AudioError::NoDuration {
-        // Still run pipeline to get desc, but return error result
-        let res = SpectrogramResult::error_result(&info);
-        // Return as Ok with error field set, so frontend can show error message
-        return Ok(res);
+    // Clone for blocking task
+    let path = params.path.clone();
+    let window_clone = window.clone();
+
+    // Heavy work offloaded to blocking thread pool so UI stays responsive
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        // Open audio (may be slow for large files)
+        let info = audio::open_audio_file(&path, stream);
+        if info.error != audio::AudioError::Ok && info.error != audio::AudioError::NoDuration {
+            return SpectrogramResult::error_result(&info);
+        }
+        if channel >= info.channels && info.channels != 0 {
+            // Return error via panic-like? We'll return a SpectrogramResult with error field
+            // But for API parity, we should return Err; however spawn_blocking can't easily return Err
+            // So we encode as error result
+            let mut r = SpectrogramResult::error_result(&info);
+            r.error = format!("channel {} out of range for {} channels", channel, info.channels);
+            return r;
+        }
+
+        // Run pipeline with progress emission every ~1% or 10 samples
+        // We use a closure that emits via window_clone
+        let emit = |sample: usize, bands: usize, values: &[f32]| {
+            // Throttle: emit every 5 samples or on last
+            if sample % 5 == 0 || sample + 1 == samples {
+                let payload = ProgressPayload {
+                    sample,
+                    bands,
+                    values: values.to_vec(),
+                };
+                let _ = window_clone.emit("spectrogram-progress", &payload);
+            }
+        };
+
+        crate::pipeline::run_pipeline_with_emit(info, wf, fft_bits, samples, channel, stream, emit)
+    })
+    .await
+    .map_err(|e| format!("task join error: {}", e))?;
+
+    // Check if inner error was encoded as channel out of range
+    if result.error.starts_with("channel ") && result.error.contains("out of range") {
+        return Err(result.error);
     }
 
-    if channel >= info.channels && info.channels != 0 {
-        return Err(format!(
-            "channel {} out of range for {} channels",
-            channel, info.channels
-        ));
-    }
-
-    let result = run_pipeline(info, wf, fft_bits, samples, channel, stream);
     Ok(result)
 }
 
@@ -247,7 +285,7 @@ pub fn get_app_info() -> serde_json::Value {
             "Wyatt J. Brown"
         ],
         "artist": "Olga Vasylevska",
-        "license": "GPL-2.0"
+        "license": "GPL-3.0"
     })
 }
 

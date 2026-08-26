@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Result};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 use symphonia::core::audio::{AudioBufferRef, Signal};
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::errors::Error as SymphoniaError;
@@ -7,6 +9,12 @@ use symphonia::core::formats::{FormatOptions, Track};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
+
+static AUDIO_CACHE: OnceLock<Mutex<HashMap<String, AudioFileInfo>>> = OnceLock::new();
+
+fn audio_cache() -> &'static Mutex<HashMap<String, AudioFileInfo>> {
+    AUDIO_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AudioError {
@@ -67,8 +75,17 @@ impl AudioFileInfo {
 }
 
 /// Open audio file using symphonia, optionally selecting stream index (0-based among audio streams)
+/// Results are cached per (path, stream) to avoid re-decoding on resize/window changes.
 pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFileInfo {
     let path = path.as_ref();
+    let cache_key = format!("{}|{}", path.display(), stream_index);
+    // Check cache first (skip for non-existent files to avoid caching negative)
+    if let Ok(cache) = audio_cache().lock() {
+        if let Some(cached) = cache.get(&cache_key) {
+            // Clone and return; need to handle that file may have changed on disk (mtime check omitted for speed)
+            return cached.clone();
+        }
+    }
     // Check file exists
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
@@ -515,7 +532,7 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
     // Estimate bit_rate if zero but bits_per_sample present, keep zero as per original logic
     // Original: if bits_per_sample present, bit_rate=0; if bit_rate present, bits_per_sample cleared for AAC etc. We keep as estimated.
 
-    AudioFileInfo {
+    let result = AudioFileInfo {
         error,
         codec_name: final_codec_name,
         bit_rate: final_bit_rate,
@@ -526,7 +543,18 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
         duration: final_duration,
         pcm: final_pcm,
         frames: final_frames,
+    };
+    // Cache successful decodes (limit to 4 entries to avoid unbounded memory)
+    if result.error == AudioError::Ok {
+        if let Ok(mut cache) = audio_cache().lock() {
+            if cache.len() >= 4 {
+                // Evict oldest (simple clear)
+                cache.clear();
+            }
+            cache.insert(cache_key, result.clone());
+        }
     }
+    result
 }
 
 fn is_audio_codec(codec: symphonia::core::codecs::CodecType) -> bool {

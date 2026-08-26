@@ -47,8 +47,9 @@ body {
   border-radius: 4px;
   cursor: default;
 }
-.menu:hover { background: rgba(255,255,255,0.08); }
-.menu-title { font-size: 13px; }
+.menu:hover { background: rgba(255,255,255,0.05); }
+.menu.open { background: rgba(255,255,255,0.12); }
+.menu-title { font-size: 13px; user-select: none; }
 .menu-dropdown {
   display: none;
   position: absolute;
@@ -62,7 +63,7 @@ body {
   z-index: 100;
   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
 }
-.menu:hover .menu-dropdown { display: flex; flex-direction: column; }
+.menu.open .menu-dropdown { display: flex; flex-direction: column; }
 .menu-dropdown button {
   text-align: left;
   background: transparent;
@@ -188,8 +189,8 @@ canvas#spectrogram {
 .shortcuts-hint {
   background: #111;
   color: #888;
-  padding: 6px 12px;
-  font-size: 11px;
+  padding: 7px 12px;
+  font-size: 12px;
   text-align: center;
   border-top: 1px solid #222;
   flex-shrink: 0;

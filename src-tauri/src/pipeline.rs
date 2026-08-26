@@ -122,6 +122,21 @@ pub fn run_pipeline(
     channel: usize,
     stream: usize,
 ) -> SpectrogramResult {
+    run_pipeline_with_emit(info, window_function, fft_bits, samples, channel, stream, |_, _, _| {})
+}
+
+pub fn run_pipeline_with_emit<F>(
+    info: AudioFileInfo,
+    window_function: WindowFunction,
+    fft_bits: usize,
+    samples: usize,
+    channel: usize,
+    stream: usize,
+    mut emit: F,
+) -> SpectrogramResult
+where
+    F: FnMut(usize, usize, &[f32]),
+{
     if info.error != crate::audio::AudioError::Ok {
         return SpectrogramResult::error_result(&info);
     }
@@ -159,12 +174,10 @@ pub fn run_pipeline(
     let coss = precompute_coss(nfft);
     let mut fft_plan = FftPlan::new(fft_bits);
 
+    // Reusable windowed buffer to avoid allocation per FFT
+    let mut windowed = vec![0.0f32; nfft];
+
     // Interval calculation mimicking AudioFileImpl::start + worker_func
-    // Original: frames_per_interval = av_rescale_rnd(duration, rate, error_base, AV_ROUND_DOWN)
-    // error_per_interval = (duration * rate) % error_base
-    // error_base = samples * time_base.den
-    // Simplified: total_frames = duration * sample_rate
-    // So we can compute directly:
     let total_frames_i64 = total_frames as i64;
     let samples_i64 = samples as i64;
     let frames_per_interval = total_frames_i64 / samples_i64;
@@ -179,28 +192,17 @@ pub fn run_pipeline(
     let mut acc_error: i64 = 0;
     let mut sample_idx: usize = 0;
 
-    // For efficient circular handling, we don't need ring buffer because we have full pcm in memory
-    // We'll iterate over head index from 0..total_frames
-    // head represents circular position, but we can just index pcm directly with bounds check and zero pad for early samples < nfft
     let mut head: usize = 0;
 
     while head < total_frames && sample_idx < samples {
-        // head is index of latest sample added (0-based)
-        // In original, input[pos] = buffer sample, pos increments, head increments per sample consumed
-        // We emulate frames counting
         frames += 1;
 
-        // Determine if we have enough frames for interval or overflow
         let int_full = acc_error < error_base && frames == frames_per_interval;
         let int_over = acc_error >= error_base && frames == 1 + frames_per_interval;
 
-        // Check if we need to run FFT
         let should_fft = (frames % nfft as i64 == 0) || ((int_full || int_over) && num_fft == 0);
 
         if should_fft {
-            // Prepare windowed input: last nfft samples ending at head
-            // If head+1 < nfft, we need to zero-pad beginning
-            let mut windowed = vec![0.0f32; nfft];
             for i in 0..nfft {
                 let idx = head as i64 - nfft as i64 + 1 + i as i64;
                 let val = if idx < 0 {
@@ -213,7 +215,6 @@ pub fn run_pipeline(
                 let w = get_window_value(window_function, i, nfft, &coss);
                 windowed[i] = val * w;
             }
-            // Execute FFT
             for (j, &v) in windowed.iter().enumerate() {
                 fft_plan.set_input(j, v);
             }
@@ -231,20 +232,18 @@ pub fn run_pipeline(
                 acc_error += error_per_interval;
             }
 
-            // Average
             if num_fft > 0 {
                 for b in 0..bands {
                     output[b] /= num_fft as f32;
                 }
-            } else {
-                // No FFT? Should not happen, but leave zeros
             }
 
-            // Store to magnitudes: sample_idx column
-            // Original stores sample column with bands - y - 1 flip? But we store bottom=0
             for b in 0..bands {
                 magnitudes[sample_idx * bands + b] = output[b];
             }
+
+            // Emit progress for realtime plotting
+            emit(sample_idx, bands, &output);
 
             sample_idx += 1;
             frames = 0;
@@ -258,9 +257,6 @@ pub fn run_pipeline(
 
         head += 1;
     }
-
-    // If we exited before filling all samples (e.g., total_frames small), the remaining columns will be zero
-    // That's okay; original would have filled via remaining data handling
 
     SpectrogramResult {
         bands,
