@@ -1,8 +1,7 @@
-use crate::audio::{AudioFileInfo, extract_channel};
-use crate::fft::{precompute_coss, FftPlan, WindowFunction, bits_to_bands, get_window_value};
+use crate::audio::{extract_channel, AudioFileInfo};
+use crate::fft::{bits_to_bands, get_window_value, precompute_coss, FftPlan, WindowFunction};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineRequest {
@@ -104,6 +103,54 @@ pub fn pipeline_desc(
     desc
 }
 
+struct IntervalTask {
+    sample_idx: usize,
+    heads: Vec<usize>,
+}
+
+fn compute_interval_output(
+    interval: &IntervalTask,
+    pcm: &[f32],
+    coss: &[f32],
+    window_function: WindowFunction,
+    fft_plan: &mut FftPlan,
+    nfft: usize,
+    bands: usize,
+    output: &mut [f32],
+) {
+    output.fill(0.0);
+    let num_fft = interval.heads.len();
+    if num_fft == 0 {
+        return;
+    }
+    let total_frames = pcm.len();
+    for &head in &interval.heads {
+        for i in 0..nfft {
+            let idx = head as i64 - nfft as i64 + 1 + i as i64;
+            let val = if idx < 0 {
+                0.0
+            } else {
+                let ui = idx as usize;
+                if ui < total_frames {
+                    pcm[ui]
+                } else {
+                    0.0
+                }
+            };
+            let w = get_window_value(window_function, i, nfft, coss);
+            fft_plan.set_input(i, val * w);
+        }
+        fft_plan.execute();
+        for b in 0..bands {
+            output[b] += fft_plan.get_output(b);
+        }
+    }
+    let div = num_fft as f32;
+    for b in 0..bands {
+        output[b] /= div;
+    }
+}
+
 pub fn run_pipeline(
     info: AudioFileInfo,
     window_function: WindowFunction,
@@ -151,179 +198,96 @@ where
     if total_frames == 0 {
         return SpectrogramResult::error_result(&info);
     }
-
     let nfft = 1usize << fft_bits;
     let bands = bits_to_bands(fft_bits);
-    let coss = Arc::new(precompute_coss(nfft));
-    let pcm = Arc::new(pcm);
+    let coss = precompute_coss(nfft);
 
-    // Precompute per-sample interval boundaries using integer division (Bresenham, matches original error accumulation)
     let total_i64 = total_frames as i64;
     let samples_i64 = samples as i64;
+    let frames_per_interval = total_i64 / samples_i64;
+    let error_per_interval = total_i64 % samples_i64;
+    let error_base = samples_i64;
 
-    // Fast path: per-interval direct computation instead of per-frame loop over 20M iterations.
-    // Each column s covers [s*total/samples, (s+1)*total/samples)
-    let mut magnitudes = vec![0.0f32; samples * bands];
+    // Fast integer-only first pass to determine exact interval boundaries and FFT positions
+    let mut tasks: Vec<IntervalTask> = Vec::with_capacity(samples);
+    let mut cur_heads: Vec<usize> = Vec::new();
+    let mut frames: i64 = 0;
+    let mut num_fft: usize = 0;
+    let mut acc_error: i64 = 0;
+    let mut sample_idx: usize = 0;
+    let mut head: usize = 0;
 
-    // For smooth realtime plotting we prioritize sequential per-column emit (continuous lines) over parallel burst.
-    // Parallel is still used for the non-emit path (run_pipeline) via a separate implementation, but for emit we stay sequential.
-    // This gives ~100x speedup over the old per-frame loop (800 vs 21M iterations) while keeping animation smooth.
-    let use_parallel = false;
-
-    if use_parallel {
-        // Parallel path — compute each column independently
-        magnitudes
-            .par_chunks_mut(bands)
-            .enumerate()
-            .for_each(|(s, chunk)| {
-                let start = (s as i64 * total_i64 / samples_i64) as usize;
-                let end = ((s as i64 + 1) * total_i64 / samples_i64) as usize;
-                let interval_len = end.saturating_sub(start);
-                if interval_len == 0 {
-                    chunk.fill(f32::NEG_INFINITY);
-                    return;
-                }
-                // Determine FFT positions: every nfft within interval, plus one at end if interval < nfft
-                let mut positions = Vec::new();
-                if interval_len < nfft {
-                    positions.push(end.saturating_sub(1));
-                } else {
-                    let mut p = start + nfft - 1;
-                    while p < end {
-                        positions.push(p);
-                        p += nfft;
-                    }
-                    if positions.is_empty() {
-                        positions.push(end - 1);
-                    }
-                }
-                let num_fft = positions.len() as f32;
-                let mut acc = vec![0.0f32; bands];
-                // Each thread needs its own FFT plan (RealFftPlanner is not Sync)
-                let mut planner = realfft::RealFftPlanner::<f32>::new();
-                let fft = planner.plan_fft_forward(nfft);
-                let mut scratch = fft.make_output_vec();
-                let mut windowed = vec![0.0f32; nfft];
-                let mut input = vec![0.0f32; nfft];
-                for &window_end in &positions {
-                    for i in 0..nfft {
-                        let idx = window_end as i64 - nfft as i64 + 1 + i as i64;
-                        let v = if idx < 0 {
-                            0.0
-                        } else {
-                            let ui = idx as usize;
-                            if ui < total_frames { pcm[ui] } else { 0.0 }
-                        };
-                        windowed[i] = v * get_window_value(window_function, i, nfft, &coss);
-                    }
-                    input.copy_from_slice(&windowed);
-                    // scratch is reused, but need fresh each time
-                    let mut out = scratch.clone();
-                    // realfft wants &mut input, &mut output
-                    // We use a temporary clone of input because plan consumes &mut
-                    let mut inp = input.clone();
-                    fft.process(&mut inp, &mut out).unwrap();
-                    let n2 = (nfft as f32) * (nfft as f32);
-                    let dc = out[0].re;
-                    let mut mag0 = 10.0 * (dc * dc / n2).log10();
-                    if !mag0.is_finite() { mag0 = f32::NEG_INFINITY; }
-                    acc[0] += mag0;
-                    let nyq = out[nfft / 2].re;
-                    let mut mag_nyq = 10.0 * (nyq * nyq / n2).log10();
-                    if !mag_nyq.is_finite() { mag_nyq = f32::NEG_INFINITY; }
-                    acc[nfft / 2] += mag_nyq;
-                    for i in 1..nfft / 2 {
-                        let re = out[i].re;
-                        let im = out[i].im;
-                        let mag = re * re + im * im;
-                        let mut v = 10.0 * (mag / n2).log10();
-                        if !v.is_finite() { v = f32::NEG_INFINITY; }
-                        acc[i] += v;
-                    }
-                }
-                for b in 0..bands {
-                    // Handle NEG_INFINITY averaging: if any is -inf, average stays -inf unless all are -inf
-                    // For our case, -inf averaged with finite should be finite? But original leaves -inf for silence.
-                    // We do simple average, but if acc contains -inf, the sum will be -inf, /num_fft stays -inf.
-                    chunk[b] = acc[b] / num_fft;
-                }
-            });
-
-        // Emit in order for smooth progressive UI (still fast, but now continuous)
-        for s in 0..samples {
-            let chunk = &magnitudes[s * bands..(s + 1) * bands];
-            emit(s, bands, chunk);
+    while head < total_frames && sample_idx < samples {
+        frames += 1;
+        let int_full = acc_error < error_base && frames == frames_per_interval;
+        let int_over = acc_error >= error_base && frames == 1 + frames_per_interval;
+        let should_fft = (frames % nfft as i64 == 0) || ((int_full || int_over) && num_fft == 0);
+        if should_fft {
+            cur_heads.push(head);
+            num_fft += 1;
         }
-    } else {
-        // Sequential fast path (small samples, also used for correctness)
-        let mut planner = realfft::RealFftPlanner::<f32>::new();
-        let fft = planner.plan_fft_forward(nfft);
-        let mut scratch = fft.make_output_vec();
-        let mut windowed = vec![0.0f32; nfft];
-        let mut input = vec![0.0f32; nfft];
-        let mut acc = vec![0.0f32; bands];
-
-        for s in 0..samples {
-            let start = (s as i64 * total_i64 / samples_i64) as usize;
-            let end = ((s as i64 + 1) * total_i64 / samples_i64) as usize;
-            let interval_len = end.saturating_sub(start);
-            if interval_len == 0 {
-                for b in 0..bands { magnitudes[s * bands + b] = f32::NEG_INFINITY; }
-                emit(s, bands, &magnitudes[s * bands..(s + 1) * bands]);
-                continue;
-            }
-            let mut positions = Vec::new();
-            if interval_len < nfft {
-                positions.push(end.saturating_sub(1));
+        if int_full || int_over {
+            if int_over {
+                acc_error -= error_base;
             } else {
-                let mut p = start + nfft - 1;
-                while p < end {
-                    positions.push(p);
-                    p += nfft;
-                }
-                if positions.is_empty() { positions.push(end - 1); }
+                acc_error += error_per_interval;
             }
-            acc.fill(0.0);
-            for &window_end in &positions {
-                for i in 0..nfft {
-                    let idx = window_end as i64 - nfft as i64 + 1 + i as i64;
-                    let v = if idx < 0 { 0.0 } else { let ui = idx as usize; if ui < total_frames { pcm[ui] } else { 0.0 } };
-                    windowed[i] = v * get_window_value(window_function, i, nfft, &coss);
-                }
-                input.copy_from_slice(&windowed);
-                let mut out = scratch.clone();
-                let mut inp = input.clone();
-                fft.process(&mut inp, &mut out).unwrap();
-                let n2 = (nfft as f32) * (nfft as f32);
-                let dc = out[0].re;
-                let mut mag0 = 10.0 * (dc * dc / n2).log10();
-                if !mag0.is_finite() { mag0 = f32::NEG_INFINITY; }
-                acc[0] += mag0;
-                let nyq = out[nfft / 2].re;
-                let mut mag_nyq = 10.0 * (nyq * nyq / n2).log10();
-                if !mag_nyq.is_finite() { mag_nyq = f32::NEG_INFINITY; }
-                acc[nfft / 2] += mag_nyq;
-                for i in 1..nfft / 2 {
-                    let re = out[i].re;
-                    let im = out[i].im;
-                    let mag = re * re + im * im;
-                    let mut v = 10.0 * (mag / n2).log10();
-                    if !v.is_finite() { v = f32::NEG_INFINITY; }
-                    acc[i] += v;
-                }
+            tasks.push(IntervalTask {
+                sample_idx,
+                heads: std::mem::take(&mut cur_heads),
+            });
+            sample_idx += 1;
+            frames = 0;
+            num_fft = 0;
+            if sample_idx >= samples {
+                break;
             }
-            let num_fft = positions.len() as f32;
-            for b in 0..bands {
-                let v = acc[b] / num_fft;
-                magnitudes[s * bands + b] = v;
-            }
-            emit(s, bands, &magnitudes[s * bands..(s + 1) * bands]);
         }
+        head += 1;
     }
 
-    // Replace NEG_INFINITY with -200 for display clamping? Keep -inf for tests, but backend should probably clamp to -100 for frontend?
-    // Frontend expects finite values; it clamps to lrange/urange anyway, so -inf will be clamped to lrange.
-    // Keep as is for correctness.
+    // Pad tasks up to samples if total_frames was short
+    while tasks.len() < samples {
+        let s = tasks.len();
+        tasks.push(IntervalTask {
+            sample_idx: s,
+            heads: Vec::new(),
+        });
+    }
+
+    let mut magnitudes = vec![0.0f32; samples * bands];
+
+    // Parallel processing across chunks with Rayon (utilizing all 16 cores)
+    const BATCH_SIZE: usize = 16;
+    for chunk_tasks in tasks.chunks(BATCH_SIZE) {
+        let start_idx = chunk_tasks[0].sample_idx;
+        let count = chunk_tasks.len();
+        let slice = &mut magnitudes[start_idx * bands..(start_idx + count) * bands];
+
+        slice
+            .par_chunks_mut(bands)
+            .zip(chunk_tasks.par_iter())
+            .for_each_init(
+                || FftPlan::new(fft_bits),
+                |fft_plan, (out_chunk, task)| {
+                    compute_interval_output(
+                        task,
+                        &pcm,
+                        &coss,
+                        window_function,
+                        fft_plan,
+                        nfft,
+                        bands,
+                        out_chunk,
+                    );
+                },
+            );
+
+        for (i, task) in chunk_tasks.iter().enumerate() {
+            let col = &magnitudes[(start_idx + i) * bands..(start_idx + i + 1) * bands];
+            emit(task.sample_idx, bands, col);
+        }
+    }
 
     SpectrogramResult {
         bands,
@@ -345,7 +309,6 @@ where
 mod tests {
     use super::*;
     use crate::audio::AudioFileInfo;
-
     #[test]
     fn test_desc() {
         let info = AudioFileInfo {
@@ -364,7 +327,6 @@ mod tests {
         assert!(d.contains("FLAC"));
         assert!(d.contains("48000 Hz"));
     }
-
     #[test]
     fn test_desc_reference() {
         let info = AudioFileInfo {
@@ -385,7 +347,6 @@ mod tests {
         assert!(d.contains("channel 2 / 2"), "desc {}", d);
         assert!(d.contains("W:2048"), "desc {}", d);
         assert!(d.contains("F:Hann"), "desc {}", d);
-
         let info2 = AudioFileInfo {
             error: crate::audio::AudioError::Ok,
             codec_name: "FLAC".to_string(),
@@ -401,7 +362,6 @@ mod tests {
         let d2 = pipeline_desc(&info2, 0, 0, WindowFunction::Hamming, 11);
         assert!(d2.contains("24 bits") || d2.contains("24 bit"), "desc {}", d2);
         assert!(!d2.contains("kbps"), "should not contain kbps when bps present");
-
         let info3 = AudioFileInfo {
             error: crate::audio::AudioError::CannotOpenFile,
             codec_name: "".to_string(),
@@ -417,7 +377,6 @@ mod tests {
         let d3 = pipeline_desc(&info3, 0, 0, WindowFunction::Hann, 11);
         assert!(d3.contains("Cannot open input file"), "desc {}", d3);
     }
-
     #[test]
     fn test_pipeline_synthetic() {
         let sample_rate = 44100;
@@ -460,7 +419,6 @@ mod tests {
         }
         assert!((max_b as i32 - expected_bin as i32).abs() <= 3, "peak {} expected {} freq {} sample_rate {}", max_b, expected_bin, freq, sample_rate);
     }
-
     #[test]
     fn test_pipeline_window_functions() {
         let sample_rate = 44100;
@@ -491,5 +449,124 @@ mod tests {
         assert!(diff > 0.5, "different windows should produce different results, diff={}", diff);
         let diff2: f32 = r2.magnitudes.iter().zip(r3.magnitudes.iter()).map(|(a,b)| (a-b).abs()).sum();
         assert!(diff2 > 0.5, "diff2={}", diff2);
+    }
+
+    #[test]
+    fn test_pipeline_all_fft_bits() {
+        let sample_rate: u32 = 44100;
+        let frames = (sample_rate / 2) as usize; // 0.5s
+        let freq = 440.0;
+        let mut pcm = Vec::with_capacity(frames);
+        for i in 0..frames {
+            let s = (2.0 * std::f64::consts::PI * freq * i as f64 / sample_rate as f64).sin() as f32;
+            pcm.push(s);
+        }
+        let info = AudioFileInfo {
+            error: crate::audio::AudioError::Ok,
+            codec_name: "PCM".to_string(),
+            bit_rate: 0,
+            sample_rate,
+            bits_per_sample: 16,
+            streams: 1,
+            channels: 1,
+            duration: 0.5,
+            pcm,
+            frames,
+        };
+
+        for bits in 8..=14 {
+            let result = run_pipeline(info.clone(), WindowFunction::Hann, bits, 50, 0, 0);
+            assert_eq!(result.bands, bits_to_bands(bits));
+            assert_eq!(result.samples, 50);
+            assert_eq!(result.magnitudes.len(), 50 * bits_to_bands(bits));
+            let expected_bin = (freq * (1 << bits) as f64 / sample_rate as f64).round() as usize;
+
+            let mut band_sums = vec![0.0f32; result.bands];
+            for s in 0..result.samples {
+                for b in 0..result.bands {
+                    band_sums[b] += result.magnitudes[s * result.bands + b];
+                }
+            }
+            let mut max_b = 0;
+            let mut max_v = f32::NEG_INFINITY;
+            for (i, &v) in band_sums.iter().enumerate() {
+                if v > max_v {
+                    max_v = v;
+                    max_b = i;
+                }
+            }
+            assert!(
+                (max_b as i32 - expected_bin as i32).abs() <= 3,
+                "bits {} peak {} expected {}",
+                bits,
+                max_b,
+                expected_bin
+            );
+        }
+    }
+
+    #[test]
+    fn test_pipeline_clipped() {
+        let sample_rate: u32 = 44100;
+        let frames = (sample_rate / 2) as usize;
+        let freq = 440.0;
+        let mut pcm = Vec::with_capacity(frames);
+        for i in 0..frames {
+            let s = ((2.0 * std::f64::consts::PI * freq * i as f64 / sample_rate as f64).sin() * 4.0) as f32;
+            let clamped = s.clamp(-1.0, 1.0);
+            pcm.push(clamped);
+        }
+        let info = AudioFileInfo {
+            error: crate::audio::AudioError::Ok,
+            codec_name: "PCM".to_string(),
+            bit_rate: 0,
+            sample_rate,
+            bits_per_sample: 16,
+            streams: 1,
+            channels: 1,
+            duration: 0.5,
+            pcm,
+            frames,
+        };
+        let result = run_pipeline(info, WindowFunction::Hann, 11, 40, 0, 0);
+        assert_eq!(result.samples, 40);
+        for &v in &result.magnitudes {
+            assert!(!v.is_nan(), "clipped audio produced NaN magnitude");
+        }
+    }
+
+    #[test]
+    fn test_pipeline_ordered_emissions() {
+        let sample_rate: u32 = 44100;
+        let frames = sample_rate as usize;
+        let pcm = vec![0.1f32; frames];
+        let info = AudioFileInfo {
+            error: crate::audio::AudioError::Ok,
+            codec_name: "PCM".to_string(),
+            bit_rate: 0,
+            sample_rate,
+            bits_per_sample: 16,
+            streams: 1,
+            channels: 1,
+            duration: 1.0,
+            pcm,
+            frames,
+        };
+        let mut emitted_samples = Vec::new();
+        run_pipeline_with_emit(
+            info,
+            WindowFunction::Hann,
+            11,
+            64,
+            0,
+            0,
+            |sample, _bands, _values| {
+                emitted_samples.push(sample);
+            },
+        );
+        assert_eq!(emitted_samples.len(), 64);
+        for (i, &s) in emitted_samples.iter().enumerate() {
+            assert_eq!(s, i, "sample emission out of order: at {} got {}", i, s);
+        }
     }
 }

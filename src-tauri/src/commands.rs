@@ -73,6 +73,7 @@ pub struct AnalyzeParams {
     pub window_function: Option<String>,
     pub fft_bits: Option<usize>,
     pub samples: Option<usize>,
+    pub show_preview: Option<bool>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -93,6 +94,9 @@ pub async fn analyze_audio(
     let wf = WindowFunction::from_str(&wf_str);
     let fft_bits = params.fft_bits.unwrap_or(11);
     let samples = params.samples.unwrap_or(800);
+    let show_preview = params
+        .show_preview
+        .unwrap_or_else(|| Preferences::global().get_show_preview());
 
     if !(8..=14).contains(&fft_bits) {
         return Err(format!("fft_bits out of range 8..14: {}", fft_bits));
@@ -110,29 +114,24 @@ pub async fn analyze_audio(
             return SpectrogramResult::error_result(&info);
         }
         if channel >= info.channels && info.channels != 0 {
-            // Return error via panic-like? We'll return a SpectrogramResult with error field
-            // But for API parity, we should return Err; however spawn_blocking can't easily return Err
-            // So we encode as error result
             let mut r = SpectrogramResult::error_result(&info);
             r.error = format!("channel {} out of range for {} channels", channel, info.channels);
             return r;
         }
 
-        // Run pipeline with progress emission every ~1% or 10 samples
-        // We use a closure that emits via window_clone
-        let emit = |sample: usize, bands: usize, values: &[f32]| {
-            // Throttle: emit every 5 samples or on last
-            if sample % 5 == 0 || sample + 1 == samples {
+        if show_preview {
+            let emit = |sample: usize, bands: usize, values: &[f32]| {
                 let payload = ProgressPayload {
                     sample,
                     bands,
                     values: values.to_vec(),
                 };
                 let _ = window_clone.emit("spectrogram-progress", &payload);
-            }
-        };
-
-        crate::pipeline::run_pipeline_with_emit(info, wf, fft_bits, samples, channel, stream, emit)
+            };
+            crate::pipeline::run_pipeline_with_emit(info, wf, fft_bits, samples, channel, stream, emit)
+        } else {
+            crate::pipeline::run_pipeline(info, wf, fft_bits, samples, channel, stream)
+        }
     })
     .await
     .map_err(|e| format!("task join error: {}", e))?;

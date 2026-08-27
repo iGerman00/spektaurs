@@ -224,13 +224,17 @@ dialog.dialog h2 {
   margin-bottom: 12px;
 }
 .field label { min-width: 80px; }
-.field select, .field input[type="text"] {
+.field select, .field input, .field input[type="text"], .field input[type="number"] {
   flex: 1;
-  background: #1e1e1e;
+  background: #2d2d2d;
   border: 1px solid #444;
   color: var(--fg);
   padding: 6px 8px;
   border-radius: 6px;
+}
+.field select option {
+  background: #2d2d2d;
+  color: #e0e0e0;
 }
 .checkbox { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .dialog-actions {

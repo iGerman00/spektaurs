@@ -155,52 +155,124 @@ function paletteColor(palette: Palette, level: number): number {
   switch (palette) { case "spectrum": return spectrum(level); case "sox": return sox(level); case "mono": return mono(level); }
 }
 const paletteLUT = new Map<string, Uint32Array>();
+const paletteLutABGR = new Map<string, Uint32Array>();
+
 function getPaletteLUT(palette: Palette): Uint32Array {
   const key = palette;
   if (paletteLUT.has(key)) return paletteLUT.get(key)!;
   const lut = new Uint32Array(256);
-  for (let i=0;i<256;i++) {
-    const level = i/255;
+  for (let i = 0; i < 256; i++) {
+    const level = i / 255;
     lut[i] = paletteColor(palette, level);
   }
   paletteLUT.set(key, lut);
   return lut;
 }
-function paletteColorFast(palette: Palette, level: number): number {
-  const lut = getPaletteLUT(palette);
-  const idx = Math.max(0, Math.min(255, Math.floor(level*255)));
-  return lut[idx];
+
+function getPaletteLutABGR(palette: Palette): Uint32Array {
+  const key = palette;
+  if (paletteLutABGR.has(key)) return paletteLutABGR.get(key)!;
+  const rgbLut = getPaletteLUT(palette);
+  const lutABGR = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    const col = rgbLut[i];
+    const r = (col >> 16) & 0xFF;
+    const g = (col >> 8) & 0xFF;
+    const b = col & 0xFF;
+    lutABGR[i] = (0xFF << 24) | (b << 16) | (g << 8) | r;
+  }
+  paletteLutABGR.set(key, lutABGR);
+  return lutABGR;
 }
-function bitsToBands(bits: number): number { return (1 << (bits - 1)) + 1; }
-function clamp(v: number, lo: number, hi: number): number { return Math.min(hi, Math.max(lo, v)); }
-function timeFormatter(unit: number): string { const m = Math.floor(unit / 60); const s = unit % 60; return `${m}:${s.toString().padStart(2, "0")}`; }
-function freqFormatter(unit: number): string { return `${unit / 1000} kHz`; }
-function densityFormatter(unit: number): string { return `${-unit} dB`; }
+
+function bitsToBands(bits: number): number {
+  return (1 << (bits - 1)) + 1;
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v));
+}
+
+function timeFormatter(unit: number): string {
+  const m = Math.floor(unit / 60);
+  const s = unit % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function freqFormatter(unit: number): string {
+  return `${unit / 1000} kHz`;
+}
+
+function densityFormatter(unit: number): string {
+  return `${-unit} dB`;
+}
+
 function trimText(ctx: CanvasRenderingContext2D, s: string, length: number, trimEnd: boolean): string {
-  if (length <= 0) return ""; if (ctx.measureText(s).width <= length) return s;
-  const fix = "..."; let i = 0, k = s.length;
-  while (k - i > 1) { const j = Math.floor((i + k) / 2); const cand = trimEnd ? s.substring(0, j) + fix : fix + s.substring(j); const ww = ctx.measureText(cand).width; if (trimEnd !== (ww > length)) i = j; else k = j; }
+  if (length <= 0) return "";
+  if (ctx.measureText(s).width <= length) return s;
+  const fix = "...";
+  let i = 0, k = s.length;
+  while (k - i > 1) {
+    const j = Math.floor((i + k) / 2);
+    const cand = trimEnd ? s.substring(0, j) + fix : fix + s.substring(j);
+    const ww = ctx.measureText(cand).width;
+    if (trimEnd !== (ww > length)) i = j;
+    else k = j;
+  }
   return trimEnd ? s.substring(0, i) + fix : fix + s.substring(k);
 }
+
 class Ruler {
-  constructor(public x: number, public y: number, public pos: "top" | "right" | "bottom" | "left", public sampleLabel: string, public factors: number[], public minUnits: number, public maxUnits: number, public spacing: number, public scale: number, public offset: number, public formatter: (u: number) => string) {}
+  constructor(
+    public x: number,
+    public y: number,
+    public pos: "top" | "right" | "bottom" | "left",
+    public sampleLabel: string,
+    public factors: number[],
+    public minUnits: number,
+    public maxUnits: number,
+    public spacing: number,
+    public scale: number,
+    public offset: number,
+    public formatter: (u: number) => string
+  ) {}
+
   draw(ctx: CanvasRenderingContext2D) {
-    const size = ctx.measureText(this.sampleLabel); const len = (this.pos === "top" || this.pos === "bottom") ? size.width : 12;
-    let factor = 0; for (const f of this.factors) { if (f === 0) break; if (Math.abs(this.scale * f) >= this.spacing * len) { factor = f; break; } }
-    this.drawTick(ctx, this.minUnits); this.drawTick(ctx, this.maxUnits);
-    if (factor > 0) { for (let tick = this.minUnits + factor; tick < this.maxUnits; tick += factor) { if (Math.abs(this.scale * (this.maxUnits - tick)) < len * 1.2) break; this.drawTick(ctx, tick); } }
+    const size = ctx.measureText(this.sampleLabel);
+    const len = (this.pos === "top" || this.pos === "bottom") ? size.width : 12;
+    let factor = 0;
+    for (const f of this.factors) {
+      if (f === 0) break;
+      if (Math.abs(this.scale * f) >= this.spacing * len) {
+        factor = f;
+        break;
+      }
+    }
+    this.drawTick(ctx, this.minUnits);
+    this.drawTick(ctx, this.maxUnits);
+    if (factor > 0) {
+      for (let tick = this.minUnits + factor; tick < this.maxUnits; tick += factor) {
+        if (Math.abs(this.scale * (this.maxUnits - tick)) < len * 1.2) break;
+        this.drawTick(ctx, tick);
+      }
+    }
   }
+
   drawTick(ctx: CanvasRenderingContext2D, tick: number) {
-    const GAP = 10, TICK_LEN = 4; const label = this.formatter(tick);
+    const GAP = 10, TICK_LEN = 4;
+    const label = this.formatter(tick);
     const value = (this.pos === "top" || this.pos === "bottom") ? tick : this.maxUnits + this.minUnits - tick;
-    const p = this.offset + this.scale * (value - this.minUnits); const w = ctx.measureText(label).width; const h = 12;
-    // Use top baseline for consistency
-    const prevBaseline = ctx.textBaseline; ctx.textBaseline = "middle";
-    if (this.pos === "top") ctx.fillText(label, this.x + p - w / 2, this.y - GAP - h/2);
+    const p = this.offset + this.scale * (value - this.minUnits);
+    const w = ctx.measureText(label).width;
+    const h = 12;
+    const prevBaseline = ctx.textBaseline;
+    ctx.textBaseline = "middle";
+    if (this.pos === "top") ctx.fillText(label, this.x + p - w / 2, this.y - GAP - h / 2);
     else if (this.pos === "right") ctx.fillText(label, this.x + GAP, this.y + p);
-    else if (this.pos === "bottom") ctx.fillText(label, this.x + p - w / 2, this.y + GAP + h/2);
+    else if (this.pos === "bottom") ctx.fillText(label, this.x + p - w / 2, this.y + GAP + h / 2);
     else if (this.pos === "left") ctx.fillText(label, this.x - w - GAP, this.y + p);
     ctx.textBaseline = prevBaseline;
+
     ctx.beginPath();
     if (this.pos === "top") { ctx.moveTo(this.x + p, this.y); ctx.lineTo(this.x + p, this.y - TICK_LEN); }
     else if (this.pos === "right") { ctx.moveTo(this.x, this.y + p); ctx.lineTo(this.x + TICK_LEN, this.y + p); }
@@ -211,8 +283,6 @@ class Ruler {
 }
 
 function ensureOffscreen(samples: number, bands: number) {
-  // For huge offscreens (large window + large screen) keep full size but ensure we don't OOM — cap at 8M pixels
-  // If samples*bands > 12M, we still create full offscreen but fill is single rect, cheap
   if (offscreen && offscreen.width === samples && offscreen.height === bands) return;
   offscreen = document.createElement("canvas");
   offscreen.width = samples;
@@ -223,37 +293,41 @@ function ensureOffscreen(samples: number, bands: number) {
     offscreenCtx.fillRect(0, 0, samples, bands);
   }
 }
+
 function updateOffscreenColumn(sample: number, bands: number, values: number[]) {
   if (!offscreen || !offscreenCtx || offscreen.width !== state.samples || offscreen.height !== bands) {
     ensureOffscreen(state.samples, bands);
   }
   if (!offscreenCtx || !offscreen) return;
   const range = state.urange - state.lrange;
-  // Use ImageData for the column — one putImageData per column instead of bands fillRect (much faster, continuous)
   const colData = offscreenCtx.createImageData(1, bands);
+  const d32 = new Uint32Array(colData.data.buffer);
+  const lutABGR = getPaletteLutABGR(state.palette);
   for (let y = 0; y < bands; y++) {
     const v = values[y];
-    const clamped = clamp(v, state.lrange, state.urange);
-    const level = range === 0 ? 0 : (clamped - state.lrange) / range;
-    const col = paletteColorFast(state.palette, level);
+    const isNan = !isFinite(v);
+    const clamped = isNan ? state.lrange : clamp(v, state.lrange, state.urange);
+    const level = isNan ? 0 : (range === 0 ? 0 : (clamped - state.lrange) / range);
+    const idx = Math.max(0, Math.min(255, Math.floor(level * 255)));
     const yy = bands - y - 1;
-    const idx = yy * 4;
-    colData.data[idx] = (col >> 16) & 0xFF;
-    colData.data[idx+1] = (col >> 8) & 0xFF;
-    colData.data[idx+2] = col & 0xFF;
-    colData.data[idx+3] = 255;
+    d32[yy] = lutABGR[idx];
   }
   offscreenCtx.putImageData(colData, sample, 0);
 }
+
 function rebuildOffscreenFromState() {
   if (state.samples <= 0 || state.bands <= 0 || state.magnitudes.length === 0) {
-    offscreen = null; offscreenCtx = null; return;
+    offscreen = null;
+    offscreenCtx = null;
+    return;
   }
   ensureOffscreen(state.samples, state.bands);
   if (!offscreenCtx || !offscreen) return;
   const range = state.urange - state.lrange;
   const bands = state.bands, samples = state.samples;
+  const lutABGR = getPaletteLutABGR(state.palette);
   const imgData = offscreenCtx.createImageData(samples, bands);
+  const d32 = new Uint32Array(imgData.data.buffer);
   for (let x = 0; x < samples; x++) {
     const base = x * bands;
     for (let y = 0; y < bands; y++) {
@@ -261,173 +335,154 @@ function rebuildOffscreenFromState() {
       const isNan = !isFinite(v);
       const clamped = isNan ? state.lrange : clamp(v, state.lrange, state.urange);
       const level = isNan ? 0 : (range === 0 ? 0 : (clamped - state.lrange) / range);
-      const col = paletteColorFast(state.palette, level);
+      const idx = Math.max(0, Math.min(255, Math.floor(level * 255)));
       const yy = bands - y - 1;
-      const idx = (yy * samples + x) * 4;
-      imgData.data[idx] = (col >> 16) & 0xFF;
-      imgData.data[idx+1] = (col >> 8) & 0xFF;
-      imgData.data[idx+2] = col & 0xFF;
-      imgData.data[idx+3] = 255;
+      d32[yy * samples + x] = lutABGR[idx];
     }
   }
   offscreenCtx.putImageData(imgData, 0, 0);
+}
+
+function renderScene(c: CanvasRenderingContext2D, w: number, h: number) {
+  c.fillStyle = "black";
+  c.fillRect(0, 0, w, h);
+  c.strokeStyle = "white";
+  c.fillStyle = "white";
+  c.lineWidth = 1;
+
+  const fontScale = window.devicePixelRatio > 1 ? 1.1 : 1.0;
+  const normalFont = `${Math.round(12 * fontScale)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+  const largeFont = `600 ${Math.round(14 * fontScale)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+  const smallFont = `${Math.round(11 * fontScale)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+  const normalHeight = 14, largeHeight = 16;
+
+  // Spek version in top right (aligned baseline)
+  c.textBaseline = "alphabetic";
+  c.font = largeFont;
+  c.fillStyle = "white";
+  const pkgY = TPAD - GAP - 6;
+  const pkgX = w - RPAD + GAP;
+  c.fillText(PACKAGE_NAME, pkgX, pkgY);
+  const pkgW = c.measureText(PACKAGE_NAME + " ").width;
+  c.font = smallFont;
+  c.fillStyle = "#ccc";
+  c.fillText(PACKAGE_VERSION, pkgX + pkgW, pkgY);
+
+  const hasImage = state.samples > 0 && state.bands > 1 && offscreen && w - LPAD - RPAD > 0 && h - TPAD - BPAD > 0;
+  if (hasImage) {
+    const imgW = w - LPAD - RPAD, imgH = h - TPAD - BPAD;
+    c.imageSmoothingEnabled = false;
+    c.drawImage(offscreen!, LPAD, TPAD, imgW, imgH);
+
+    // File name and description
+    c.textBaseline = "top";
+    c.font = largeFont;
+    c.fillStyle = "white";
+    const displayName = state.path ? (state.path.split(/[\/\\]/).pop() || state.path) : "";
+    const trimmedName = trimText(c, displayName, w - LPAD - RPAD, false);
+    c.fillText(trimmedName, LPAD, TPAD - 2 * GAP - normalHeight - largeHeight);
+    c.font = normalFont;
+    const trimmedDesc = trimText(c, state.desc, w - LPAD - RPAD, true);
+    c.fillText(trimmedDesc, LPAD, TPAD - GAP - normalHeight);
+
+    // Rulers
+    c.textBaseline = "alphabetic";
+    c.font = smallFont;
+    c.fillStyle = "white";
+    c.strokeStyle = "white";
+    if (state.duration > 0) {
+      const timeFactors = [1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 1200, 1800, 0];
+      new Ruler(LPAD, h - BPAD, "bottom", "00:00", timeFactors, 0, Math.floor(state.duration), 1.5, (w - LPAD - RPAD) / state.duration, 0, timeFormatter).draw(c);
+    }
+    if (state.sampleRate > 0) {
+      const freq = Math.floor(state.sampleRate / 2);
+      const freqFactors = [1000, 2000, 5000, 10000, 20000, 0];
+      new Ruler(LPAD, TPAD, "left", "00 kHz", freqFactors, 0, freq, 3.0, (h - TPAD - BPAD) / freq, 0, freqFormatter).draw(c);
+    }
+  }
+
+  // Border around the spectrogram
+  c.textBaseline = "top";
+  c.strokeStyle = "white";
+  c.strokeRect(LPAD, TPAD, w - LPAD - RPAD, h - TPAD - BPAD);
+
+  // Palette strip & spectral density ruler
+  if (h - TPAD - BPAD > 0) {
+    const paletteBands = bitsToBands(state.fftBits);
+    const pOff = document.createElement("canvas");
+    pOff.width = RULER;
+    pOff.height = paletteBands;
+    const poctx = pOff.getContext("2d");
+    if (poctx) {
+      const d = poctx.createImageData(RULER, paletteBands);
+      const d32 = new Uint32Array(d.data.buffer);
+      const lutABGR = getPaletteLutABGR(state.palette);
+      for (let y = 0; y < paletteBands; y++) {
+        const level = y / paletteBands;
+        const idx = Math.max(0, Math.min(255, Math.floor(level * 255)));
+        const colABGR = lutABGR[idx];
+        const yy = paletteBands - y - 1;
+        for (let x = 0; x < RULER; x++) {
+          d32[yy * RULER + x] = colABGR;
+        }
+      }
+      poctx.putImageData(d, 0, 0);
+      c.drawImage(pOff, w - RPAD + GAP, TPAD, RULER, h - TPAD - BPAD + 1);
+    }
+    c.textBaseline = "middle";
+    c.font = smallFont;
+    c.fillStyle = "white";
+    c.strokeStyle = "white";
+    const densityFactors = [1, 2, 5, 10, 20, 50, 0];
+    new Ruler(w - RPAD + GAP + RULER, TPAD, "right", "-00 dB", densityFactors, -state.urange, -state.lrange, 3.0, (h - TPAD - BPAD) / (state.lrange - state.urange), h - TPAD - BPAD, densityFormatter).draw(c);
+    c.textBaseline = "alphabetic";
+  }
+
+  // Error / empty prompt
+  if (state.error) {
+    c.textBaseline = "middle";
+    c.textAlign = "center";
+    c.font = largeFont;
+    c.fillStyle = "#ff6666";
+    c.fillText(state.error, w / 2, h / 2);
+    c.textAlign = "left";
+    c.textBaseline = "alphabetic";
+  } else if (!state.path) {
+    c.textBaseline = "middle";
+    c.textAlign = "center";
+    c.font = normalFont;
+    c.fillStyle = "#888";
+    c.fillText(t("Drop an audio file here or use File → Open"), w / 2, h / 2);
+    c.textAlign = "left";
+    c.textBaseline = "alphabetic";
+  }
 }
 
 function render() {
   if (!ctx || !canvas) return;
   const dpr = window.devicePixelRatio || 1;
   const rect = container.getBoundingClientRect();
-  const width = Math.max(0, rect.width);
-  const height = Math.max(0, rect.height);
-  canvas.width = width * dpr; canvas.height = height * dpr;
-  canvas.style.width = width + "px"; canvas.style.height = height + "px";
+  const width = Math.max(0, Math.floor(rect.width));
+  const height = Math.max(0, Math.floor(rect.height));
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  canvas.style.width = width + "px";
+  canvas.style.height = height + "px";
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const w = width, h = height;
-  ctx.fillStyle = "black"; ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = "white"; ctx.fillStyle = "white"; ctx.lineWidth = 1;
 
-  // Larger, more readable fonts — scaled for DPI
-  const fontScale = window.devicePixelRatio > 1 ? 1.1 : 1.0;
-  const normalFont = `${Math.round(12 * fontScale)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-  const largeFont = `600 ${Math.round(14 * fontScale)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-  const smallFont = `${Math.round(11 * fontScale)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-  const normalHeight = 14, largeHeight = 16;
-  // smallHeight not needed as version shares baseline with package (fixed misalignment)
+  renderScene(ctx, width, height);
 
-  // --- Top bar: use alphabetic baseline, shared y for Spek + version (fixes misalignment) ---
-  ctx.textBaseline = "alphabetic";
-  ctx.font = largeFont; ctx.fillStyle = "white";
-  const pkgY = TPAD - GAP - 6; // baseline
-  const pkgX = w - RPAD + GAP;
-  ctx.fillText(PACKAGE_NAME, pkgX, pkgY);
-  const pkgW = ctx.measureText(PACKAGE_NAME + " ").width;
-  ctx.font = smallFont; ctx.fillStyle = "#ccc";
-  ctx.fillText(PACKAGE_VERSION, pkgX + pkgW, pkgY); // same baseline, now aligned
-
-  const hasImage = state.samples > 0 && state.bands > 1 && state.magnitudes.length > 0 && w - LPAD - RPAD > 0 && h - TPAD - BPAD > 0;
-  if (hasImage) {
-    const imgW = w - LPAD - RPAD, imgH = h - TPAD - BPAD;
-    const totalPixels = state.samples * state.bands;
-    const isPreview = state.magnitudes.some(v => !isFinite(v));
-    if (totalPixels > 8_000_000) {
-      // Large: direct display rendering — for preview use fast nearest (400k), for final use averaging
-      const displayW = imgW, displayH = imgH;
-      const xRatio = state.samples / displayW;
-      const yRatio = state.bands / displayH;
-      const range = state.urange - state.lrange;
-      const lut = getPaletteLUT(state.palette);
-      const imgData = ctx.createImageData(displayW, displayH);
-      if (isPreview) {
-        // Fast nearest neighbor for preview (smooth, not chopped, ~400k ops)
-        for (let dy = 0; dy < displayH; dy++) {
-          const srcY = Math.min(state.bands - 1, Math.floor(dy * yRatio));
-          for (let dx = 0; dx < displayW; dx++) {
-            const srcX = Math.min(state.samples - 1, Math.floor(dx * xRatio));
-            const v = state.magnitudes[srcX * state.bands + srcY];
-            const clamped = isFinite(v) ? clamp(v, state.lrange, state.urange) : state.lrange;
-            const level = range === 0 ? 0 : (clamped - state.lrange) / range;
-            const col = lut[Math.max(0, Math.min(255, Math.floor(level*255)))];
-            const idx = (dy * displayW + dx) * 4;
-            imgData.data[idx] = (col >> 16) & 0xFF;
-            imgData.data[idx+1] = (col >> 8) & 0xFF;
-            imgData.data[idx+2] = col & 0xFF;
-            imgData.data[idx+3] = 255;
-          }
-        }
-      } else {
-        // Final: high-quality averaging for W>8192 detail (more detailed, not less)
-        for (let dx = 0; dx < displayW; dx++) {
-          const srcX0 = Math.floor(dx * xRatio);
-          const srcX1 = Math.min(state.samples, Math.floor((dx + 1) * xRatio));
-          if (srcX1 <= srcX0) continue;
-          for (let dy = 0; dy < displayH; dy++) {
-            const srcY0 = Math.floor(dy * yRatio);
-            const srcY1 = Math.min(state.bands, Math.floor((dy + 1) * yRatio));
-            let sum = 0, cnt = 0;
-            for (let sx = srcX0; sx < srcX1; sx++) {
-              const base = sx * state.bands;
-              for (let sy = srcY0; sy < srcY1; sy++) {
-                const v = state.magnitudes[base + sy];
-                if (isFinite(v)) { sum += clamp(v, state.lrange, state.urange); cnt++; }
-              }
-            }
-            const avg = cnt ? sum / cnt : state.lrange;
-            const level = range === 0 ? 0 : (avg - state.lrange) / range;
-            const col = lut[Math.max(0, Math.min(255, Math.floor(level*255)))];
-            const idx = (dy * displayW + dx) * 4;
-            imgData.data[idx] = (col >> 16) & 0xFF;
-            imgData.data[idx+1] = (col >> 8) & 0xFF;
-            imgData.data[idx+2] = col & 0xFF;
-            imgData.data[idx+3] = 255;
-          }
-        }
-      }
-      ctx.putImageData(imgData, LPAD, TPAD);
-    } else {
-      // Use persistent offscreen for incremental, smooth animation
-      if (!offscreen || offscreen.width !== state.samples || offscreen.height !== state.bands) {
-        rebuildOffscreenFromState();
-      }
-      if (offscreen) {
-        ctx.imageSmoothingEnabled = false; // crisp for normal, keeps W>8192 detailed
-        ctx.drawImage(offscreen, LPAD, TPAD, imgW, imgH);
-      }
-    }
-    // File name + desc (use top baseline for these) + tooltip for ellipsed text
-    ctx.textBaseline = "top"; ctx.font = largeFont; ctx.fillStyle = "white";
-    const displayName = state.path ? (state.path.split(/[\/]/).pop() || state.path) : "";
-    const trimmedName = trimText(ctx, displayName, w - LPAD - RPAD, false);
-    ctx.fillText(trimmedName, LPAD, TPAD - 2*GAP - normalHeight - largeHeight);
-    ctx.font = normalFont;
-    const trimmedDesc = trimText(ctx, state.desc, w - LPAD - RPAD, true);
-    ctx.fillText(trimmedDesc, LPAD, TPAD - GAP - normalHeight);
-    // Tooltip when ellipsed (fixes small window truncated stream 1/1 text)
+  // Update top-bar-tooltip for ellipsed text only (never set container.title)
+  const displayName = state.path ? (state.path.split(/[\/\\]/).pop() || state.path) : "";
+  const topBar = document.getElementById("top-bar-tooltip");
+  if (topBar) {
+    const trimmedName = trimText(ctx, displayName, width - LPAD - RPAD, false);
+    const trimmedDesc = trimText(ctx, state.desc, width - LPAD - RPAD, true);
     if (trimmedName !== displayName || trimmedDesc !== state.desc) {
-      container.title = `${displayName}
-${state.desc}`;
+      topBar.title = `${displayName}\n${state.desc}`;
     } else {
-      container.title = "";
+      topBar.title = "";
     }
-    ctx.textBaseline = "alphabetic";
-    ctx.font = smallFont; ctx.fillStyle = "white"; ctx.strokeStyle = "white";
-    if (state.duration) {
-      const timeFactors = [1,2,5,10,20,30,60,120,300,600,1200,1800,0];
-      new Ruler(LPAD, h - BPAD, "bottom", "00:00", timeFactors, 0, Math.floor(state.duration), 1.5, (w - LPAD - RPAD)/state.duration, 0, timeFormatter).draw(ctx);
-    }
-    if (state.sampleRate) {
-      const freq = Math.floor(state.sampleRate/2);
-      const freqFactors = [1000,2000,5000,10000,20000,0];
-      new Ruler(LPAD, TPAD, "left", "00 kHz", freqFactors, 0, freq, 3.0, (h - TPAD - BPAD)/freq, 0, freqFormatter).draw(ctx);
-    }
-  }
-  ctx.textBaseline = "top";
-  ctx.strokeStyle = "white"; ctx.strokeRect(LPAD, TPAD, w - LPAD - RPAD, h - TPAD - BPAD);
-  if (h - TPAD - BPAD > 0) {
-    const paletteBands = bitsToBands(state.fftBits);
-    const pOff = document.createElement("canvas"); pOff.width = RULER; pOff.height = paletteBands;
-    const poctx = pOff.getContext("2d");
-    if (poctx) {
-      const d = poctx.createImageData(RULER, paletteBands);
-      for (let y = 0; y < paletteBands; y++) {
-        const col = paletteColor(state.palette, y / paletteBands);
-        const r = (col>>16)&0xFF, g=(col>>8)&0xFF, b=col&0xFF;
-        const yy = paletteBands - y - 1;
-        for (let x=0;x<RULER;x++) { const idx=(yy*RULER+x)*4; d.data[idx]=r; d.data[idx+1]=g; d.data[idx+2]=b; d.data[idx+3]=255; }
-      }
-      poctx.putImageData(d,0,0);
-      ctx.drawImage(pOff, w - RPAD + GAP, TPAD, RULER, h - TPAD - BPAD + 1);
-    }
-    ctx.textBaseline = "middle"; ctx.font = smallFont; ctx.fillStyle = "white"; ctx.strokeStyle = "white";
-    const densityFactors = [1,2,5,10,20,50,0];
-    new Ruler(w - RPAD + GAP + RULER, TPAD, "right", "-00 dB", densityFactors, -state.urange, -state.lrange, 3.0, (h - TPAD - BPAD)/(state.lrange - state.urange), h - TPAD - BPAD, densityFormatter).draw(ctx);
-    ctx.textBaseline = "alphabetic";
-  }
-  if (state.error) {
-    ctx.textBaseline = "middle"; ctx.textAlign = "center"; ctx.font = largeFont; ctx.fillStyle = "#ff6666";
-    ctx.fillText(state.error, w/2, h/2); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
-  } else if (!state.path) {
-    ctx.textBaseline = "middle"; ctx.textAlign = "center"; ctx.font = normalFont; ctx.fillStyle = "#888";
-    ctx.fillText(t("Drop an audio file here or use File → Open"), w/2, h/2); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
   }
 }
 
@@ -438,23 +493,29 @@ async function analyzeCurrent() {
   const rect = container.getBoundingClientRect();
   const availW = Math.max(1, Math.floor(rect.width - LPAD - RPAD));
   const samples = availW;
-  // Cache check: if same file+params+samples, reuse
   const key = `${state.path}|${state.stream}|${state.channel}|${state.windowFunction}|${state.fftBits}|${samples}|${state.urange}|${state.lrange}|${state.palette}`;
-  // Note: palette/urange/lrange don't require re-analysis, only re-render. So cache without them for pipeline,
-  // but we include them for simplicity to avoid stale magnitudes.
-  // For palette/range changes we actually don't need pipeline — just re-render. Caller should handle.
-  // Here we are called for pipeline-changing params, so include those.
+
   if (cachedKey === key && cachedResult && lastSamples === samples) {
-    Object.assign(state, { bands: cachedResult.bands, samples: cachedResult.samples, sampleRate: cachedResult.sample_rate, duration: cachedResult.duration, desc: cachedResult.desc, magnitudes: cachedResult.magnitudes.slice(), streams: cachedResult.streams, channels: cachedResult.channels, error: cachedResult.error });
-    document.title = state.path ? `Spek - ${state.path.split(/[\\/]/).pop()}` : "Spek - Acoustic Spectrum Analyser";
+    Object.assign(state, {
+      bands: cachedResult.bands,
+      samples: cachedResult.samples,
+      sampleRate: cachedResult.sample_rate,
+      duration: cachedResult.duration,
+      desc: cachedResult.desc,
+      magnitudes: cachedResult.magnitudes.slice(),
+      streams: cachedResult.streams,
+      channels: cachedResult.channels,
+      error: cachedResult.error,
+    });
+    document.title = state.path ? `Spek - ${state.path.split(/[\/\\]/).pop()}` : "Spek - Acoustic Spectrum Analyser";
     rebuildOffscreenFromState();
     render();
     return;
   }
 
-  // Prepare progressive state — incremental offscreen for smooth continuous lines
   const bands = bitsToBands(state.fftBits);
-  state.bands = bands; state.samples = samples;
+  state.bands = bands;
+  state.samples = samples;
   state.magnitudes = new Array(samples * bands).fill(NaN);
   state.error = "";
   ensureOffscreen(samples, bands);
@@ -463,11 +524,17 @@ async function analyzeCurrent() {
     offscreenCtx.fillRect(0, 0, samples, bands);
   }
   render();
+
   loadingEl.classList.remove("hidden");
   const loadingText = loadingEl.querySelector("span");
   if (loadingText) loadingText.textContent = `${t("Analysing…")} 0%`;
+
   let showPreview = true;
-  try { const pref:any = await invoke("get_default_settings"); showPreview = pref.show_preview !== false; } catch {}
+  try {
+    const pref: any = await invoke("get_default_settings");
+    showPreview = pref.show_preview !== false;
+  } catch {}
+
   let lastRender = performance.now();
   let unlisten: (() => void) | null = null;
   if (showPreview) {
@@ -477,89 +544,147 @@ async function analyzeCurrent() {
         const p = ev.payload;
         if (p.bands !== bands) return;
         const off = p.sample * bands;
-        for (let i = 0; i < bands && off + i < state.magnitudes.length; i++) state.magnitudes[off + i] = p.values[i];
+        for (let i = 0; i < bands && off + i < state.magnitudes.length; i++) {
+          state.magnitudes[off + i] = p.values[i];
+        }
         updateOffscreenColumn(p.sample, bands, p.values);
         const now = performance.now();
         if (now - lastRender > 16 || p.sample + 1 === samples) {
           lastRender = now;
-          requestAnimationFrame(() => { if (myGen === generation) render(); });
-          if (loadingText) loadingText.textContent = `${t("Analysing…")} ${Math.round((p.sample + 1) / samples * 100)}%`;
+          requestAnimationFrame(() => {
+            if (myGen === generation) render();
+          });
+          if (loadingText) {
+            loadingText.textContent = `${t("Analysing…")} ${Math.round(((p.sample + 1) / samples) * 100)}%`;
+          }
         }
       });
     } catch {}
   }
 
   try {
-    const result: SpectrogramResult = await invoke("analyze_audio", { params: { path: state.path, stream: state.stream, channel: state.channel, window_function: state.windowFunction, fft_bits: state.fftBits, samples } });
+    const result: SpectrogramResult = await invoke("analyze_audio", {
+      params: {
+        path: state.path,
+        stream: state.stream,
+        channel: state.channel,
+        window_function: state.windowFunction,
+        fft_bits: state.fftBits,
+        samples,
+        show_preview: showPreview,
+      },
+    });
     if (myGen !== generation) {
       if (unlisten) unlisten();
-      return; // cancelled by newer generation
+      return;
     }
-    state.bands = result.bands; state.samples = result.samples; state.sampleRate = result.sample_rate; state.duration = result.duration;
-    state.desc = result.desc; state.magnitudes = result.magnitudes.slice(); state.streams = result.streams; state.channels = result.channels; state.error = result.error;
-    document.title = state.path ? `Spek - ${state.path.split(/[\/]/).pop()}` : "Spek - Acoustic Spectrum Analyser";
-    // Cache
-    cachedResult = result; cachedKey = key; lastSamples = samples;
-    if (!showPreview) {
-      rebuildOffscreenFromState();
-    } else if (!offscreen || offscreen.width !== state.samples || offscreen.height !== state.bands) {
+    state.bands = result.bands;
+    state.samples = result.samples;
+    state.sampleRate = result.sample_rate;
+    state.duration = result.duration;
+    state.desc = result.desc;
+    state.magnitudes = result.magnitudes.slice();
+    state.streams = result.streams;
+    state.channels = result.channels;
+    state.error = result.error;
+    document.title = state.path ? `Spek - ${state.path.split(/[\/\\]/).pop()}` : "Spek - Acoustic Spectrum Analyser";
+    cachedResult = result;
+    cachedKey = key;
+    lastSamples = samples;
+
+    if (!showPreview || !offscreen || offscreen.width !== state.samples || offscreen.height !== state.bands) {
       rebuildOffscreenFromState();
     }
-  } catch (e:any) {
-    if (myGen === generation) { state.error = String(e); showToast("Error: "+state.error); }
+  } catch (e: any) {
+    if (myGen === generation) {
+      state.error = String(e);
+      showToast("Error: " + state.error);
+    }
   } finally {
     if (unlisten) unlisten();
-    if (myGen === generation) { loadingEl.classList.add("hidden"); render(); }
+    if (myGen === generation) {
+      loadingEl.classList.add("hidden");
+      render();
+    }
   }
 }
 
 async function openFileDialog() {
-  const selected = await dialogOpen({ title: t("Open…"), filters: [{ name: "Audio files", extensions: ["3gp","aac","aif","aifc","aiff","amr","awb","ape","au","dts","flac","flv","gsm","m4a","m4p","mp3","mp4","mp+","mpc","mpp","oga","ogg","opus","ra","ram","snd","wav","wma","wv"] }, { name: "All files", extensions: ["*"] }] });
-  if (typeof selected === "string" && selected) { state.path = selected; state.stream=0; state.channel=0; cachedKey=""; await analyzeCurrent(); }
-}
-async function saveSpectrogram() {
-  if (!canvas || state.samples===0) { showToast("No spectrogram to save"); return; }
-  const selected = await dialogSave({ title: t("Save Spectrogram…"), defaultPath: (state.path ? state.path.split(/[\\/]/).pop()+".png" : "Untitled.png"), filters: [{ name: "PNG images", extensions: ["png"] }] });
-  if (!selected) return;
-  // Respect save_resolution preference
-  let dataUrl: string;
-  try {
-    const prefs:any = await invoke("get_default_settings");
-    const res = prefs.save_resolution || "window";
-    if (res === "window" || res === "original" || res.includes("x")) {
-      if (res === "window") {
-        dataUrl = canvas.toDataURL("image/png");
-      } else if (res === "original" && offscreen) {
-        dataUrl = offscreen.toDataURL("image/png");
-      } else if (res.includes("x")) {
-        const [wStr, hStr] = res.split("x");
-        const w = parseInt(wStr), h = parseInt(hStr);
-        const tmp = document.createElement("canvas"); tmp.width = w; tmp.height = h;
-        const tctx = tmp.getContext("2d");
-        if (tctx && offscreen) {
-          tctx.fillStyle = "black"; tctx.fillRect(0,0,w,h);
-          // Draw offscreen scaled to requested resolution
-          tctx.drawImage(offscreen, 0, 0, w, h);
-          // For simplicity, not re-rendering rulers at new res — use window render scaled
-          // Better would be to re-render at that res, but this is a quick export
-          dataUrl = tmp.toDataURL("image/png");
-        } else {
-          dataUrl = canvas.toDataURL("image/png");
-        }
-      } else {
-        dataUrl = canvas.toDataURL("image/png");
-      }
-    } else {
-      dataUrl = canvas.toDataURL("image/png");
-    }
-  } catch {
-    dataUrl = canvas.toDataURL("image/png");
+  const selected = await dialogOpen({
+    title: t("Open…"),
+    filters: [
+      {
+        name: "Audio files",
+        extensions: [
+          "3gp", "aac", "aif", "aifc", "aiff", "amr", "awb", "ape", "au", "dts",
+          "flac", "flv", "gsm", "m4a", "m4p", "mp3", "mp4", "mp+", "mpc", "mpp",
+          "oga", "ogg", "opus", "ra", "ram", "snd", "wav", "wma", "wv"
+        ],
+      },
+      { name: "All files", extensions: ["*"] }
+    ],
+  });
+  if (typeof selected === "string" && selected) {
+    state.path = selected;
+    state.stream = 0;
+    state.channel = 0;
+    cachedKey = "";
+    await analyzeCurrent();
   }
-  const base64 = dataUrl.split(",")[1]; const bytes = Uint8Array.from(atob(base64), c=>c.charCodeAt(0));
+}
+
+async function saveSpectrogram() {
+  if (!canvas || state.samples === 0) {
+    showToast("No spectrogram to save");
+    return;
+  }
+  const defaultPath = state.path ? (state.path.split(/[\/\\]/).pop() + ".png") : "Untitled.png";
+  const selected = await dialogSave({
+    title: t("Save Spectrogram…"),
+    defaultPath,
+    filters: [{ name: "PNG images", extensions: ["png"] }],
+  });
+  if (!selected) return;
+
+  let saveW = canvas.clientWidth || 960;
+  let saveH = canvas.clientHeight || 640;
+  try {
+    const prefs: any = await invoke("get_default_settings");
+    const res = prefs.save_resolution || "window";
+    if (res === "original" && state.samples > 0 && state.bands > 0) {
+      saveW = state.samples + LPAD + RPAD;
+      saveH = Math.max(480, Math.min(2160, state.bands + TPAD + BPAD));
+    } else if (res.includes("x")) {
+      const [wStr, hStr] = res.split("x");
+      saveW = parseInt(wStr) || saveW;
+      saveH = parseInt(hStr) || saveH;
+    }
+  } catch {}
+
+  const exportCanvas = document.createElement("canvas");
+  exportCanvas.width = saveW;
+  exportCanvas.height = saveH;
+  const expCtx = exportCanvas.getContext("2d");
+  if (expCtx) {
+    renderScene(expCtx, saveW, saveH);
+  }
+  const dataUrl = exportCanvas.toDataURL("image/png");
+  const base64 = dataUrl.split(",")[1];
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
   const { writeFile } = await import("@tauri-apps/plugin-fs");
-  try { // @ts-ignore
-    await writeFile(selected, bytes); showToast("Saved to "+selected);
-  } catch { const a=document.createElement("a"); a.href=dataUrl; a.download=selected.split(/[\\/]/).pop()||"spectrogram.png"; document.body.appendChild(a); a.click(); a.remove(); showToast("Saved (download)"); }
+  try {
+    // @ts-ignore
+    await writeFile(selected, bytes);
+    showToast("Saved to " + selected);
+  } catch {
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = selected.split(/[\/\\]/).pop() || "spectrogram.png";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    showToast("Saved (download)");
+  }
 }
 function showToast(msg:string){ toastEl.textContent=msg; toastEl.classList.remove("hidden"); setTimeout(()=>toastEl.classList.add("hidden"),3000); }
 async function openPreferences() {
@@ -663,6 +788,19 @@ window.addEventListener("DOMContentLoaded", async ()=>{
     if (typeof def.lrange === 'number') state.lrange = def.lrange;
     if (typeof def.urange === 'number') state.urange = def.urange;
   }catch{}
+  // Ensure top-bar tooltip element exists (for stream text hover only)
+  if (!document.getElementById("top-bar-tooltip")) {
+    const tip = document.createElement("div");
+    tip.id = "top-bar-tooltip";
+    tip.style.position = "absolute";
+    tip.style.left = LPAD + "px";
+    tip.style.top = (TPAD - 2*GAP - 20) + "px";
+    tip.style.width = "calc(100% - " + (LPAD+RPAD) + "px)";
+    tip.style.height = "20px";
+    tip.style.pointerEvents = "auto";
+    tip.style.zIndex = "5";
+    container.appendChild(tip);
+  }
   applyI18n();
 
   // Menu click handling (open on click, not hover)
