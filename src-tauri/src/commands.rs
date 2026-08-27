@@ -34,6 +34,33 @@ pub fn get_language() -> String {
 }
 
 #[tauri::command]
+pub fn get_default_settings() -> serde_json::Value {
+    let p = Preferences::global();
+    serde_json::json!({
+        "fft_bits": p.get_fft_bits(),
+        "window_function": p.get_window_function(),
+        "palette": p.get_palette(),
+        "lrange": p.get_lrange(),
+        "urange": p.get_urange(),
+        "show_preview": p.get_show_preview(),
+        "save_resolution": p.get_save_resolution(),
+    })
+}
+
+#[tauri::command]
+pub fn set_default_settings(settings: serde_json::Value) -> bool {
+    let p = Preferences::global();
+    if let Some(v) = settings.get("fft_bits").and_then(|v| v.as_u64()) { p.set_fft_bits(v as u8); }
+    if let Some(v) = settings.get("window_function").and_then(|v| v.as_str()) { p.set_window_function(v.to_string()); }
+    if let Some(v) = settings.get("palette").and_then(|v| v.as_str()) { p.set_palette(v.to_string()); }
+    if let Some(v) = settings.get("lrange").and_then(|v| v.as_i64()) { p.set_lrange(v as i32); }
+    if let Some(v) = settings.get("urange").and_then(|v| v.as_i64()) { p.set_urange(v as i32); }
+    if let Some(v) = settings.get("show_preview").and_then(|v| v.as_bool()) { p.set_show_preview(v); }
+    if let Some(v) = settings.get("save_resolution").and_then(|v| v.as_str()) { p.set_save_resolution(v.to_string()); }
+    true
+}
+
+#[tauri::command]
 pub fn get_config_path() -> String {
     crate::platform::config_path("spek").to_string_lossy().to_string()
 }

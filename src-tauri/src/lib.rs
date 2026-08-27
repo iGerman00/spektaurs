@@ -29,6 +29,8 @@ pub fn run() {
             commands::get_check_update,
             commands::get_language,
             commands::get_config_path,
+            commands::get_default_settings,
+            commands::set_default_settings,
             commands::analyze_audio,
             commands::get_audio_info,
             commands::check_version,

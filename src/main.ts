@@ -154,6 +154,23 @@ function mono(level: number): number { const v = Math.floor(level * 255 + 0.5); 
 function paletteColor(palette: Palette, level: number): number {
   switch (palette) { case "spectrum": return spectrum(level); case "sox": return sox(level); case "mono": return mono(level); }
 }
+const paletteLUT = new Map<string, Uint32Array>();
+function getPaletteLUT(palette: Palette): Uint32Array {
+  const key = palette;
+  if (paletteLUT.has(key)) return paletteLUT.get(key)!;
+  const lut = new Uint32Array(256);
+  for (let i=0;i<256;i++) {
+    const level = i/255;
+    lut[i] = paletteColor(palette, level);
+  }
+  paletteLUT.set(key, lut);
+  return lut;
+}
+function paletteColorFast(palette: Palette, level: number): number {
+  const lut = getPaletteLUT(palette);
+  const idx = Math.max(0, Math.min(255, Math.floor(level*255)));
+  return lut[idx];
+}
 function bitsToBands(bits: number): number { return (1 << (bits - 1)) + 1; }
 function clamp(v: number, lo: number, hi: number): number { return Math.min(hi, Math.max(lo, v)); }
 function timeFormatter(unit: number): string { const m = Math.floor(unit / 60); const s = unit % 60; return `${m}:${s.toString().padStart(2, "0")}`; }
@@ -194,11 +211,13 @@ class Ruler {
 }
 
 function ensureOffscreen(samples: number, bands: number) {
+  // For huge offscreens (large window + large screen) keep full size but ensure we don't OOM — cap at 8M pixels
+  // If samples*bands > 12M, we still create full offscreen but fill is single rect, cheap
   if (offscreen && offscreen.width === samples && offscreen.height === bands) return;
   offscreen = document.createElement("canvas");
   offscreen.width = samples;
   offscreen.height = bands;
-  offscreenCtx = offscreen.getContext("2d");
+  offscreenCtx = offscreen.getContext("2d", { willReadFrequently: true } as any) as CanvasRenderingContext2D | null;
   if (offscreenCtx) {
     offscreenCtx.fillStyle = "black";
     offscreenCtx.fillRect(0, 0, samples, bands);
@@ -210,16 +229,21 @@ function updateOffscreenColumn(sample: number, bands: number, values: number[]) 
   }
   if (!offscreenCtx || !offscreen) return;
   const range = state.urange - state.lrange;
+  // Use ImageData for the column — one putImageData per column instead of bands fillRect (much faster, continuous)
+  const colData = offscreenCtx.createImageData(1, bands);
   for (let y = 0; y < bands; y++) {
     const v = values[y];
     const clamped = clamp(v, state.lrange, state.urange);
     const level = range === 0 ? 0 : (clamped - state.lrange) / range;
-    const col = paletteColor(state.palette, level);
-    const r = (col >> 16) & 0xFF, g = (col >> 8) & 0xFF, b = col & 0xFF;
+    const col = paletteColorFast(state.palette, level);
     const yy = bands - y - 1;
-    offscreenCtx.fillStyle = `rgb(${r},${g},${b})`;
-    offscreenCtx.fillRect(sample, yy, 1, 1);
+    const idx = yy * 4;
+    colData.data[idx] = (col >> 16) & 0xFF;
+    colData.data[idx+1] = (col >> 8) & 0xFF;
+    colData.data[idx+2] = col & 0xFF;
+    colData.data[idx+3] = 255;
   }
+  offscreenCtx.putImageData(colData, sample, 0);
 }
 function rebuildOffscreenFromState() {
   if (state.samples <= 0 || state.bands <= 0 || state.magnitudes.length === 0) {
@@ -229,7 +253,6 @@ function rebuildOffscreenFromState() {
   if (!offscreenCtx || !offscreen) return;
   const range = state.urange - state.lrange;
   const bands = state.bands, samples = state.samples;
-  // Use ImageData for full rebuild (faster than fillRect per pixel)
   const imgData = offscreenCtx.createImageData(samples, bands);
   for (let x = 0; x < samples; x++) {
     const base = x * bands;
@@ -238,7 +261,7 @@ function rebuildOffscreenFromState() {
       const isNan = !isFinite(v);
       const clamped = isNan ? state.lrange : clamp(v, state.lrange, state.urange);
       const level = isNan ? 0 : (range === 0 ? 0 : (clamped - state.lrange) / range);
-      const col = paletteColor(state.palette, level);
+      const col = paletteColorFast(state.palette, level);
       const yy = bands - y - 1;
       const idx = (yy * samples + x) * 4;
       imgData.data[idx] = (col >> 16) & 0xFF;
@@ -284,21 +307,87 @@ function render() {
   const hasImage = state.samples > 0 && state.bands > 1 && state.magnitudes.length > 0 && w - LPAD - RPAD > 0 && h - TPAD - BPAD > 0;
   if (hasImage) {
     const imgW = w - LPAD - RPAD, imgH = h - TPAD - BPAD;
-    // Use persistent offscreen for incremental, smooth animation (not full rebuild each frame)
-    if (!offscreen || offscreen.width !== state.samples || offscreen.height !== state.bands) {
-      rebuildOffscreenFromState();
+    const totalPixels = state.samples * state.bands;
+    const isPreview = state.magnitudes.some(v => !isFinite(v));
+    if (totalPixels > 8_000_000) {
+      // Large: direct display rendering — for preview use fast nearest (400k), for final use averaging
+      const displayW = imgW, displayH = imgH;
+      const xRatio = state.samples / displayW;
+      const yRatio = state.bands / displayH;
+      const range = state.urange - state.lrange;
+      const lut = getPaletteLUT(state.palette);
+      const imgData = ctx.createImageData(displayW, displayH);
+      if (isPreview) {
+        // Fast nearest neighbor for preview (smooth, not chopped, ~400k ops)
+        for (let dy = 0; dy < displayH; dy++) {
+          const srcY = Math.min(state.bands - 1, Math.floor(dy * yRatio));
+          for (let dx = 0; dx < displayW; dx++) {
+            const srcX = Math.min(state.samples - 1, Math.floor(dx * xRatio));
+            const v = state.magnitudes[srcX * state.bands + srcY];
+            const clamped = isFinite(v) ? clamp(v, state.lrange, state.urange) : state.lrange;
+            const level = range === 0 ? 0 : (clamped - state.lrange) / range;
+            const col = lut[Math.max(0, Math.min(255, Math.floor(level*255)))];
+            const idx = (dy * displayW + dx) * 4;
+            imgData.data[idx] = (col >> 16) & 0xFF;
+            imgData.data[idx+1] = (col >> 8) & 0xFF;
+            imgData.data[idx+2] = col & 0xFF;
+            imgData.data[idx+3] = 255;
+          }
+        }
+      } else {
+        // Final: high-quality averaging for W>8192 detail (more detailed, not less)
+        for (let dx = 0; dx < displayW; dx++) {
+          const srcX0 = Math.floor(dx * xRatio);
+          const srcX1 = Math.min(state.samples, Math.floor((dx + 1) * xRatio));
+          if (srcX1 <= srcX0) continue;
+          for (let dy = 0; dy < displayH; dy++) {
+            const srcY0 = Math.floor(dy * yRatio);
+            const srcY1 = Math.min(state.bands, Math.floor((dy + 1) * yRatio));
+            let sum = 0, cnt = 0;
+            for (let sx = srcX0; sx < srcX1; sx++) {
+              const base = sx * state.bands;
+              for (let sy = srcY0; sy < srcY1; sy++) {
+                const v = state.magnitudes[base + sy];
+                if (isFinite(v)) { sum += clamp(v, state.lrange, state.urange); cnt++; }
+              }
+            }
+            const avg = cnt ? sum / cnt : state.lrange;
+            const level = range === 0 ? 0 : (avg - state.lrange) / range;
+            const col = lut[Math.max(0, Math.min(255, Math.floor(level*255)))];
+            const idx = (dy * displayW + dx) * 4;
+            imgData.data[idx] = (col >> 16) & 0xFF;
+            imgData.data[idx+1] = (col >> 8) & 0xFF;
+            imgData.data[idx+2] = col & 0xFF;
+            imgData.data[idx+3] = 255;
+          }
+        }
+      }
+      ctx.putImageData(imgData, LPAD, TPAD);
+    } else {
+      // Use persistent offscreen for incremental, smooth animation
+      if (!offscreen || offscreen.width !== state.samples || offscreen.height !== state.bands) {
+        rebuildOffscreenFromState();
+      }
+      if (offscreen) {
+        ctx.imageSmoothingEnabled = false; // crisp for normal, keeps W>8192 detailed
+        ctx.drawImage(offscreen, LPAD, TPAD, imgW, imgH);
+      }
     }
-    if (offscreen) {
-      ctx.imageSmoothingEnabled = true;
-      (ctx as any).imageSmoothingQuality = "high";
-      ctx.drawImage(offscreen, LPAD, TPAD, imgW, imgH);
-    }
-    // File name + desc (use top baseline for these)
+    // File name + desc (use top baseline for these) + tooltip for ellipsed text
     ctx.textBaseline = "top"; ctx.font = largeFont; ctx.fillStyle = "white";
-    const displayName = state.path ? (state.path.split(/[\\/]/).pop() || state.path) : "";
-    ctx.fillText(trimText(ctx, displayName, w - LPAD - RPAD, false), LPAD, TPAD - 2*GAP - normalHeight - largeHeight);
+    const displayName = state.path ? (state.path.split(/[\/]/).pop() || state.path) : "";
+    const trimmedName = trimText(ctx, displayName, w - LPAD - RPAD, false);
+    ctx.fillText(trimmedName, LPAD, TPAD - 2*GAP - normalHeight - largeHeight);
     ctx.font = normalFont;
-    ctx.fillText(trimText(ctx, state.desc, w - LPAD - RPAD, true), LPAD, TPAD - GAP - normalHeight);
+    const trimmedDesc = trimText(ctx, state.desc, w - LPAD - RPAD, true);
+    ctx.fillText(trimmedDesc, LPAD, TPAD - GAP - normalHeight);
+    // Tooltip when ellipsed (fixes small window truncated stream 1/1 text)
+    if (trimmedName !== displayName || trimmedDesc !== state.desc) {
+      container.title = `${displayName}
+${state.desc}`;
+    } else {
+      container.title = "";
+    }
     ctx.textBaseline = "alphabetic";
     ctx.font = smallFont; ctx.fillStyle = "white"; ctx.strokeStyle = "white";
     if (state.duration) {
@@ -377,25 +466,28 @@ async function analyzeCurrent() {
   loadingEl.classList.remove("hidden");
   const loadingText = loadingEl.querySelector("span");
   if (loadingText) loadingText.textContent = `${t("Analysing…")} 0%`;
+  let showPreview = true;
+  try { const pref:any = await invoke("get_default_settings"); showPreview = pref.show_preview !== false; } catch {}
   let lastRender = performance.now();
   let unlisten: (() => void) | null = null;
-  try {
-    unlisten = await listen<ProgressPayload>("spectrogram-progress", (ev) => {
-      if (myGen !== generation) return;
-      const p = ev.payload;
-      if (p.bands !== bands) return;
-      const off = p.sample * bands;
-      for (let i = 0; i < bands && off + i < state.magnitudes.length; i++) state.magnitudes[off + i] = p.values[i];
-      updateOffscreenColumn(p.sample, bands, p.values);
-      // Smooth: render every column but throttle to ~60fps via rAF
-      const now = performance.now();
-      if (now - lastRender > 16 || p.sample + 1 === samples) {
-        lastRender = now;
-        requestAnimationFrame(() => { if (myGen === generation) render(); });
-        if (loadingText) loadingText.textContent = `${t("Analysing…")} ${Math.round((p.sample + 1) / samples * 100)}%`;
-      }
-    });
-  } catch {}
+  if (showPreview) {
+    try {
+      unlisten = await listen<ProgressPayload>("spectrogram-progress", (ev) => {
+        if (myGen !== generation) return;
+        const p = ev.payload;
+        if (p.bands !== bands) return;
+        const off = p.sample * bands;
+        for (let i = 0; i < bands && off + i < state.magnitudes.length; i++) state.magnitudes[off + i] = p.values[i];
+        updateOffscreenColumn(p.sample, bands, p.values);
+        const now = performance.now();
+        if (now - lastRender > 16 || p.sample + 1 === samples) {
+          lastRender = now;
+          requestAnimationFrame(() => { if (myGen === generation) render(); });
+          if (loadingText) loadingText.textContent = `${t("Analysing…")} ${Math.round((p.sample + 1) / samples * 100)}%`;
+        }
+      });
+    } catch {}
+  }
 
   try {
     const result: SpectrogramResult = await invoke("analyze_audio", { params: { path: state.path, stream: state.stream, channel: state.channel, window_function: state.windowFunction, fft_bits: state.fftBits, samples } });
@@ -405,10 +497,14 @@ async function analyzeCurrent() {
     }
     state.bands = result.bands; state.samples = result.samples; state.sampleRate = result.sample_rate; state.duration = result.duration;
     state.desc = result.desc; state.magnitudes = result.magnitudes.slice(); state.streams = result.streams; state.channels = result.channels; state.error = result.error;
-    document.title = state.path ? `Spek - ${state.path.split(/[\\/]/).pop()}` : "Spek - Acoustic Spectrum Analyser";
+    document.title = state.path ? `Spek - ${state.path.split(/[\/]/).pop()}` : "Spek - Acoustic Spectrum Analyser";
     // Cache
     cachedResult = result; cachedKey = key; lastSamples = samples;
-    rebuildOffscreenFromState();
+    if (!showPreview) {
+      rebuildOffscreenFromState();
+    } else if (!offscreen || offscreen.width !== state.samples || offscreen.height !== state.bands) {
+      rebuildOffscreenFromState();
+    }
   } catch (e:any) {
     if (myGen === generation) { state.error = String(e); showToast("Error: "+state.error); }
   } finally {
@@ -425,7 +521,41 @@ async function saveSpectrogram() {
   if (!canvas || state.samples===0) { showToast("No spectrogram to save"); return; }
   const selected = await dialogSave({ title: t("Save Spectrogram…"), defaultPath: (state.path ? state.path.split(/[\\/]/).pop()+".png" : "Untitled.png"), filters: [{ name: "PNG images", extensions: ["png"] }] });
   if (!selected) return;
-  const dataUrl = canvas.toDataURL("image/png"); const base64 = dataUrl.split(",")[1]; const bytes = Uint8Array.from(atob(base64), c=>c.charCodeAt(0));
+  // Respect save_resolution preference
+  let dataUrl: string;
+  try {
+    const prefs:any = await invoke("get_default_settings");
+    const res = prefs.save_resolution || "window";
+    if (res === "window" || res === "original" || res.includes("x")) {
+      if (res === "window") {
+        dataUrl = canvas.toDataURL("image/png");
+      } else if (res === "original" && offscreen) {
+        dataUrl = offscreen.toDataURL("image/png");
+      } else if (res.includes("x")) {
+        const [wStr, hStr] = res.split("x");
+        const w = parseInt(wStr), h = parseInt(hStr);
+        const tmp = document.createElement("canvas"); tmp.width = w; tmp.height = h;
+        const tctx = tmp.getContext("2d");
+        if (tctx && offscreen) {
+          tctx.fillStyle = "black"; tctx.fillRect(0,0,w,h);
+          // Draw offscreen scaled to requested resolution
+          tctx.drawImage(offscreen, 0, 0, w, h);
+          // For simplicity, not re-rendering rulers at new res — use window render scaled
+          // Better would be to re-render at that res, but this is a quick export
+          dataUrl = tmp.toDataURL("image/png");
+        } else {
+          dataUrl = canvas.toDataURL("image/png");
+        }
+      } else {
+        dataUrl = canvas.toDataURL("image/png");
+      }
+    } else {
+      dataUrl = canvas.toDataURL("image/png");
+    }
+  } catch {
+    dataUrl = canvas.toDataURL("image/png");
+  }
+  const base64 = dataUrl.split(",")[1]; const bytes = Uint8Array.from(atob(base64), c=>c.charCodeAt(0));
   const { writeFile } = await import("@tauri-apps/plugin-fs");
   try { // @ts-ignore
     await writeFile(selected, bytes); showToast("Saved to "+selected);
@@ -436,13 +566,45 @@ async function openPreferences() {
   const dlg=document.getElementById("prefs-dialog") as HTMLDialogElement;
   const langSelect=document.getElementById("language-select") as HTMLSelectElement;
   const checkUpdate=document.getElementById("check-update") as HTMLInputElement;
+  const showPreview=document.getElementById("show-preview") as HTMLInputElement;
+  const prefWindow=document.getElementById("pref-window") as HTMLSelectElement;
+  const prefDft=document.getElementById("pref-dft") as HTMLSelectElement;
+  const prefPalette=document.getElementById("pref-palette") as HTMLSelectElement;
+  const prefLow=document.getElementById("pref-low") as HTMLInputElement;
+  const prefHigh=document.getElementById("pref-high") as HTMLInputElement;
+  const prefSaveRes=document.getElementById("pref-save-res") as HTMLSelectElement;
   langSelect.innerHTML=""; const langs:[string,string][]=await invoke("get_available_languages");
   const curLang:string=await invoke("get_language"); const checkVal:boolean=await invoke("get_check_update");
-  checkUpdate.checked=checkVal; currentLang=curLang || "en"; applyI18n();
+  const defaults:any = await invoke("get_default_settings");
+  checkUpdate.checked=checkVal; (showPreview as any).checked = defaults.show_preview;
+  prefWindow.value = defaults.window_function; prefDft.value = String(defaults.fft_bits);
+  prefPalette.value = defaults.palette; prefLow.value = String(defaults.lrange); prefHigh.value = String(defaults.urange);
+  prefSaveRes.value = defaults.save_resolution;
+  currentLang=curLang || "en"; applyI18n();
   langs.forEach(([code,name])=>{ const opt=document.createElement("option"); opt.value=code; opt.textContent=name||t("(system default)"); if(code===curLang) opt.selected=true; langSelect.appendChild(opt); });
   if(!Array.from(langSelect.options).some(o=>o.selected) && langSelect.options.length) langSelect.selectedIndex=0;
   dlg.showModal();
-  const handler=async()=>{ const sel=langSelect.value; await invoke("set_language",{value:sel}); await invoke("set_check_update",{value:checkUpdate.checked}); currentLang=sel||"en"; applyI18n(); render(); showToast(t("Preferences")+" saved"); dlg.removeEventListener("close",handler); };
+  const handler=async()=>{
+    const sel=langSelect.value;
+    await invoke("set_language",{value:sel});
+    await invoke("set_check_update",{value:checkUpdate.checked});
+    await invoke("set_default_settings",{settings:{
+      window_function: prefWindow.value, fft_bits: parseInt(prefDft.value), palette: prefPalette.value,
+      lrange: parseInt(prefLow.value), urange: parseInt(prefHigh.value),
+      show_preview: (showPreview as any).checked, save_resolution: prefSaveRes.value
+    }});
+    currentLang=sel||"en"; applyI18n();
+    // Apply defaults to current state if no file open (so next file uses them)
+    if(!state.path){
+      state.windowFunction = prefWindow.value as WindowFn;
+      state.fftBits = parseInt(prefDft.value);
+      state.palette = prefPalette.value as Palette;
+      state.lrange = parseInt(prefLow.value);
+      state.urange = parseInt(prefHigh.value);
+      rebuildOffscreenFromState(); render();
+    }
+    showToast(t("Preferences")+" saved"); dlg.removeEventListener("close",handler);
+  };
   dlg.addEventListener("close",handler,{once:true});
 }
 async function openAbout(){
@@ -491,8 +653,16 @@ window.addEventListener("DOMContentLoaded", async ()=>{
   canvas=document.getElementById("spectrogram") as HTMLCanvasElement;
   ctx=canvas.getContext("2d"); container=document.getElementById("canvas-container") as HTMLElement;
   loadingEl=document.getElementById("loading") as HTMLElement; infoBar=document.getElementById("info-bar") as HTMLElement; toastEl=document.getElementById("toast") as HTMLElement;
-  // init lang
+  // init lang + defaults (window/dft/palette/low/high)
   try{ currentLang=await invoke("get_language") || "en"; if(!translations[currentLang]) currentLang="en"; }catch{}
+  try{
+    const def:any = await invoke("get_default_settings");
+    if (def.window_function) state.windowFunction = def.window_function;
+    if (def.fft_bits) state.fftBits = def.fft_bits;
+    if (def.palette) state.palette = def.palette;
+    if (typeof def.lrange === 'number') state.lrange = def.lrange;
+    if (typeof def.urange === 'number') state.urange = def.urange;
+  }catch{}
   applyI18n();
 
   // Menu click handling (open on click, not hover)
@@ -503,6 +673,13 @@ window.addEventListener("DOMContentLoaded", async ()=>{
       const isOpen=menu.classList.contains("open");
       document.querySelectorAll(".menu.open").forEach(m=>m.classList.remove("open"));
       if(!isOpen) menu.classList.add("open");
+    });
+    // Latch fix: when a menu is open, hovering over another menu should open it
+    menu.addEventListener("mouseenter", ()=>{
+      if (document.querySelector(".menu.open") && !menu.classList.contains("open")) {
+        document.querySelectorAll(".menu.open").forEach(m=>m.classList.remove("open"));
+        menu.classList.add("open");
+      }
     });
   });
   document.addEventListener("click", ()=> document.querySelectorAll(".menu.open").forEach(m=>m.classList.remove("open")));

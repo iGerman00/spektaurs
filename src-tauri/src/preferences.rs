@@ -7,13 +7,27 @@ use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PrefsFile {
-    // Flat ini style mapped to json: we store as map for flexibility but also typed fields
     #[serde(default)]
     update_check: Option<bool>,
     #[serde(default)]
     update_last: Option<i64>,
     #[serde(default)]
     general_language: Option<String>,
+    // New: default analysis settings
+    #[serde(default)]
+    fft_bits: Option<u8>,
+    #[serde(default)]
+    window_function: Option<String>,
+    #[serde(default)]
+    palette: Option<String>,
+    #[serde(default)]
+    lrange: Option<i32>,
+    #[serde(default)]
+    urange: Option<i32>,
+    #[serde(default)]
+    show_preview: Option<bool>,
+    #[serde(default)]
+    save_resolution: Option<String>,
     #[serde(flatten)]
     extra: HashMap<String, serde_json::Value>,
 }
@@ -24,6 +38,13 @@ impl Default for PrefsFile {
             update_check: Some(true),
             update_last: Some(0),
             general_language: Some(String::new()),
+            fft_bits: Some(11),
+            window_function: Some("hann".to_string()),
+            palette: Some("sox".to_string()),
+            lrange: Some(-120),
+            urange: Some(0),
+            show_preview: Some(true),
+            save_resolution: Some("window".to_string()),
             extra: HashMap::new(),
         }
     }
@@ -101,15 +122,16 @@ impl Preferences {
             }
         }
         // Ensure defaults
-        if cache.update_check.is_none() {
-            cache.update_check = Some(true);
-        }
-        if cache.update_last.is_none() {
-            cache.update_last = Some(0);
-        }
-        if cache.general_language.is_none() {
-            cache.general_language = Some(String::new());
-        }
+        if cache.update_check.is_none() { cache.update_check = Some(true); }
+        if cache.update_last.is_none() { cache.update_last = Some(0); }
+        if cache.general_language.is_none() { cache.general_language = Some(String::new()); }
+        if cache.fft_bits.is_none() { cache.fft_bits = Some(11); }
+        if cache.window_function.is_none() { cache.window_function = Some("hann".to_string()); }
+        if cache.palette.is_none() { cache.palette = Some("sox".to_string()); }
+        if cache.lrange.is_none() { cache.lrange = Some(-120); }
+        if cache.urange.is_none() { cache.urange = Some(0); }
+        if cache.show_preview.is_none() { cache.show_preview = Some(true); }
+        if cache.save_resolution.is_none() { cache.save_resolution = Some("window".to_string()); }
     }
 
     fn save(&self) {
@@ -165,6 +187,21 @@ impl Preferences {
         }
         self.save();
     }
+
+    pub fn get_fft_bits(&self) -> u8 { self.cache.lock().unwrap().fft_bits.unwrap_or(11) }
+    pub fn set_fft_bits(&self, v: u8) { { let mut c = self.cache.lock().unwrap(); c.fft_bits = Some(v); } self.save(); }
+    pub fn get_window_function(&self) -> String { self.cache.lock().unwrap().window_function.clone().unwrap_or_else(|| "hann".to_string()) }
+    pub fn set_window_function(&self, v: String) { { let mut c = self.cache.lock().unwrap(); c.window_function = Some(v); } self.save(); }
+    pub fn get_palette(&self) -> String { self.cache.lock().unwrap().palette.clone().unwrap_or_else(|| "sox".to_string()) }
+    pub fn set_palette(&self, v: String) { { let mut c = self.cache.lock().unwrap(); c.palette = Some(v); } self.save(); }
+    pub fn get_lrange(&self) -> i32 { self.cache.lock().unwrap().lrange.unwrap_or(-120) }
+    pub fn set_lrange(&self, v: i32) { { let mut c = self.cache.lock().unwrap(); c.lrange = Some(v); } self.save(); }
+    pub fn get_urange(&self) -> i32 { self.cache.lock().unwrap().urange.unwrap_or(0) }
+    pub fn set_urange(&self, v: i32) { { let mut c = self.cache.lock().unwrap(); c.urange = Some(v); } self.save(); }
+    pub fn get_show_preview(&self) -> bool { self.cache.lock().unwrap().show_preview.unwrap_or(true) }
+    pub fn set_show_preview(&self, v: bool) { { let mut c = self.cache.lock().unwrap(); c.show_preview = Some(v); } self.save(); }
+    pub fn get_save_resolution(&self) -> String { self.cache.lock().unwrap().save_resolution.clone().unwrap_or_else(|| "window".to_string()) }
+    pub fn set_save_resolution(&self, v: String) { { let mut c = self.cache.lock().unwrap(); c.save_resolution = Some(v); } self.save(); }
 
     pub fn get_all(&self) -> serde_json::Value {
         let cache = self.cache.lock().unwrap();
