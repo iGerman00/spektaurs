@@ -1,0 +1,168 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v0.8.5)'
+        required: false
+        default: ''
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Create Release
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.startsWith('refs/tags/')
+              ? context.ref.replace('refs/tags/', '')
+              : '${{ github.event.inputs.version }}' || `v${require('./package.json').version}`;
+            
+            // Check if release already exists
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: tag,
+              });
+              return existing.data.id;
+            } catch (e) {
+              const res = await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                name: `Spek ${tag}`,
+                body: `### Spek ${tag}\n\nCross-platform acoustic spectrum analyser reimplementation in Rust + Tauri.\n\n#### Download Binaries:\n- **Windows**: \`.msi\` / \`setup.exe\` (x64 / ARM64)\n- **macOS**: \`.dmg\` (Universal Apple Silicon & Intel)\n- **Linux**: \`.AppImage\` / \`.deb\` (x86_64 / ARM64)\n`,
+                draft: true,
+                prerelease: false,
+              });
+              return res.data.id;
+            }
+
+  build-tauri:
+    name: Build (${{ matrix.platform }})
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows x86_64
+          - os: windows-latest
+            platform: 'windows-x86_64'
+            target: 'x86_64-pc-windows-msvc'
+            args: '--target x86_64-pc-windows-msvc'
+
+          # Windows aarch64 (ARM64)
+          - os: windows-latest
+            platform: 'windows-aarch64'
+            target: 'aarch64-pc-windows-msvc'
+            args: '--target aarch64-pc-windows-msvc'
+
+          # macOS Universal (Intel + Apple Silicon)
+          - os: macos-latest
+            platform: 'macos-universal'
+            target: 'universal-apple-darwin'
+            args: '--target universal-apple-darwin'
+
+          # Linux x86_64
+          - os: ubuntu-22.04
+            platform: 'linux-x86_64'
+            target: 'x86_64-unknown-linux-gnu'
+            args: '--target x86_64-unknown-linux-gnu'
+
+          # Linux aarch64 (ARM64)
+          - os: ubuntu-22.04
+            platform: 'linux-aarch64'
+            target: 'aarch64-unknown-linux-gnu'
+            args: '--target aarch64-unknown-linux-gnu'
+            use_qemu: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install macOS x86_64 and aarch64 targets for universal build
+        if: matrix.target == 'universal-apple-darwin'
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
+      - name: Install Linux x86_64 dependencies
+        if: matrix.os == 'ubuntu-22.04' && !matrix.use_qemu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libssl-dev
+
+      - name: Install Linux ARM64 cross dependencies
+        if: matrix.use_qemu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu qemu-user-static
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update || true
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev:arm64 \
+            libappindicator3-dev:arm64 \
+            librsvg2-dev:arm64 \
+            patchelf:arm64 \
+            libasound2-dev:arm64 \
+            libssl-dev:arm64 || true
+          echo "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri Application
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ${{ matrix.args }}
+
+  publish-release:
+    name: Publish Release
+    needs: [create-release, build-tauri]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish Draft Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release_id }},
+              draft: false,
+            });
