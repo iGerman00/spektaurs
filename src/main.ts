@@ -127,6 +127,8 @@ let generation = 0;
 let lastSamples = -1;
 let cachedResult: SpectrogramResult | null = null;
 let cachedKey = "";
+let offscreen: HTMLCanvasElement | null = null;
+let offscreenCtx: CanvasRenderingContext2D | null = null;
 
 // ----- Palette -----
 function spectrum(level: number): number {
@@ -191,6 +193,63 @@ class Ruler {
   }
 }
 
+function ensureOffscreen(samples: number, bands: number) {
+  if (offscreen && offscreen.width === samples && offscreen.height === bands) return;
+  offscreen = document.createElement("canvas");
+  offscreen.width = samples;
+  offscreen.height = bands;
+  offscreenCtx = offscreen.getContext("2d");
+  if (offscreenCtx) {
+    offscreenCtx.fillStyle = "black";
+    offscreenCtx.fillRect(0, 0, samples, bands);
+  }
+}
+function updateOffscreenColumn(sample: number, bands: number, values: number[]) {
+  if (!offscreen || !offscreenCtx || offscreen.width !== state.samples || offscreen.height !== bands) {
+    ensureOffscreen(state.samples, bands);
+  }
+  if (!offscreenCtx || !offscreen) return;
+  const range = state.urange - state.lrange;
+  for (let y = 0; y < bands; y++) {
+    const v = values[y];
+    const clamped = clamp(v, state.lrange, state.urange);
+    const level = range === 0 ? 0 : (clamped - state.lrange) / range;
+    const col = paletteColor(state.palette, level);
+    const r = (col >> 16) & 0xFF, g = (col >> 8) & 0xFF, b = col & 0xFF;
+    const yy = bands - y - 1;
+    offscreenCtx.fillStyle = `rgb(${r},${g},${b})`;
+    offscreenCtx.fillRect(sample, yy, 1, 1);
+  }
+}
+function rebuildOffscreenFromState() {
+  if (state.samples <= 0 || state.bands <= 0 || state.magnitudes.length === 0) {
+    offscreen = null; offscreenCtx = null; return;
+  }
+  ensureOffscreen(state.samples, state.bands);
+  if (!offscreenCtx || !offscreen) return;
+  const range = state.urange - state.lrange;
+  const bands = state.bands, samples = state.samples;
+  // Use ImageData for full rebuild (faster than fillRect per pixel)
+  const imgData = offscreenCtx.createImageData(samples, bands);
+  for (let x = 0; x < samples; x++) {
+    const base = x * bands;
+    for (let y = 0; y < bands; y++) {
+      const v = state.magnitudes[base + y];
+      const isNan = !isFinite(v);
+      const clamped = isNan ? state.lrange : clamp(v, state.lrange, state.urange);
+      const level = isNan ? 0 : (range === 0 ? 0 : (clamped - state.lrange) / range);
+      const col = paletteColor(state.palette, level);
+      const yy = bands - y - 1;
+      const idx = (yy * samples + x) * 4;
+      imgData.data[idx] = (col >> 16) & 0xFF;
+      imgData.data[idx+1] = (col >> 8) & 0xFF;
+      imgData.data[idx+2] = col & 0xFF;
+      imgData.data[idx+3] = 255;
+    }
+  }
+  offscreenCtx.putImageData(imgData, 0, 0);
+}
+
 function render() {
   if (!ctx || !canvas) return;
   const dpr = window.devicePixelRatio || 1;
@@ -225,33 +284,14 @@ function render() {
   const hasImage = state.samples > 0 && state.bands > 1 && state.magnitudes.length > 0 && w - LPAD - RPAD > 0 && h - TPAD - BPAD > 0;
   if (hasImage) {
     const imgW = w - LPAD - RPAD, imgH = h - TPAD - BPAD;
-    const bands = state.bands, samples = state.samples;
-    const off = document.createElement("canvas"); off.width = samples; off.height = bands;
-    const octx = off.getContext("2d");
-    if (octx) {
-      const imgData = octx.createImageData(samples, bands);
-      const range = state.urange - state.lrange;
-      // For large bands (8193) this is heavy — but we need it. Keep offscreen, no smoothing later.
-      for (let x = 0; x < samples; x++) {
-        const base = x * bands;
-        for (let y = 0; y < bands; y++) {
-          const val = state.magnitudes[base + y];
-          const clamped = clamp(val, state.lrange, state.urange);
-          const level = (clamped - state.lrange) / range;
-          const col = paletteColor(state.palette, level);
-          const yy = bands - y - 1;
-          const idx = (yy * samples + x) * 4;
-          imgData.data[idx] = (col >> 16) & 0xFF;
-          imgData.data[idx+1] = (col >> 8) & 0xFF;
-          imgData.data[idx+2] = col & 0xFF;
-          imgData.data[idx+3] = 255;
-        }
-      }
-      octx.putImageData(imgData, 0, 0);
-      // Use high-quality smoothing for downscaling large FFTs — makes 8192+ look more detailed, not less
+    // Use persistent offscreen for incremental, smooth animation (not full rebuild each frame)
+    if (!offscreen || offscreen.width !== state.samples || offscreen.height !== state.bands) {
+      rebuildOffscreenFromState();
+    }
+    if (offscreen) {
       ctx.imageSmoothingEnabled = true;
       (ctx as any).imageSmoothingQuality = "high";
-      ctx.drawImage(off, LPAD, TPAD, imgW, imgH);
+      ctx.drawImage(offscreen, LPAD, TPAD, imgW, imgH);
     }
     // File name + desc (use top baseline for these)
     ctx.textBaseline = "top"; ctx.font = largeFont; ctx.fillStyle = "white";
@@ -316,36 +356,43 @@ async function analyzeCurrent() {
   // For palette/range changes we actually don't need pipeline — just re-render. Caller should handle.
   // Here we are called for pipeline-changing params, so include those.
   if (cachedKey === key && cachedResult && lastSamples === samples) {
-    // Use cache
     Object.assign(state, { bands: cachedResult.bands, samples: cachedResult.samples, sampleRate: cachedResult.sample_rate, duration: cachedResult.duration, desc: cachedResult.desc, magnitudes: cachedResult.magnitudes.slice(), streams: cachedResult.streams, channels: cachedResult.channels, error: cachedResult.error });
     document.title = state.path ? `Spek - ${state.path.split(/[\\/]/).pop()}` : "Spek - Acoustic Spectrum Analyser";
+    rebuildOffscreenFromState();
     render();
     return;
   }
 
-  // Prepare progressive state
+  // Prepare progressive state — incremental offscreen for smooth continuous lines
   const bands = bitsToBands(state.fftBits);
   state.bands = bands; state.samples = samples;
-  state.magnitudes = new Array(samples * bands).fill(NaN); // NaN = not yet computed
+  state.magnitudes = new Array(samples * bands).fill(NaN);
   state.error = "";
-  render(); // show empty with loading
+  ensureOffscreen(samples, bands);
+  if (offscreenCtx && offscreen) {
+    offscreenCtx.fillStyle = "black";
+    offscreenCtx.fillRect(0, 0, samples, bands);
+  }
+  render();
   loadingEl.classList.remove("hidden");
   const loadingText = loadingEl.querySelector("span");
   if (loadingText) loadingText.textContent = `${t("Analysing…")} 0%`;
-  // Listen for progress
+  let lastRender = performance.now();
   let unlisten: (() => void) | null = null;
   try {
     unlisten = await listen<ProgressPayload>("spectrogram-progress", (ev) => {
-      if (myGen !== generation) return; // stale
+      if (myGen !== generation) return;
       const p = ev.payload;
-      // p.values length == bands, p.sample is column index
-      if (p.bands !== bands) return; // outdated fft bits
+      if (p.bands !== bands) return;
       const off = p.sample * bands;
-      for (let i=0;i<bands && off+i < state.magnitudes.length;i++) state.magnitudes[off+i]=p.values[i];
-      // Throttle rendering to ~20fps
-      if (p.sample % 10 === 0 || p.sample+1===samples) {
-        render();
-        if (loadingText) loadingText.textContent = `${t("Analysing…")} ${Math.round((p.sample+1)/samples*100)}%`;
+      for (let i = 0; i < bands && off + i < state.magnitudes.length; i++) state.magnitudes[off + i] = p.values[i];
+      updateOffscreenColumn(p.sample, bands, p.values);
+      // Smooth: render every column but throttle to ~60fps via rAF
+      const now = performance.now();
+      if (now - lastRender > 16 || p.sample + 1 === samples) {
+        lastRender = now;
+        requestAnimationFrame(() => { if (myGen === generation) render(); });
+        if (loadingText) loadingText.textContent = `${t("Analysing…")} ${Math.round((p.sample + 1) / samples * 100)}%`;
       }
     });
   } catch {}
@@ -357,10 +404,11 @@ async function analyzeCurrent() {
       return; // cancelled by newer generation
     }
     state.bands = result.bands; state.samples = result.samples; state.sampleRate = result.sample_rate; state.duration = result.duration;
-    state.desc = result.desc; state.magnitudes = result.magnitudes; state.streams = result.streams; state.channels = result.channels; state.error = result.error;
+    state.desc = result.desc; state.magnitudes = result.magnitudes.slice(); state.streams = result.streams; state.channels = result.channels; state.error = result.error;
     document.title = state.path ? `Spek - ${state.path.split(/[\\/]/).pop()}` : "Spek - Acoustic Spectrum Analyser";
     // Cache
     cachedResult = result; cachedKey = key; lastSamples = samples;
+    rebuildOffscreenFromState();
   } catch (e:any) {
     if (myGen === generation) { state.error = String(e); showToast("Error: "+state.error); }
   } finally {
@@ -424,14 +472,14 @@ function handleKey(e:KeyboardEvent){
     case "C": if(state.channels) state.channel=(state.channel-1+state.channels)%state.channels; break;
     case "f": { const o:WindowFn[]=["hann","hamming","blackman-harris"]; const i=o.indexOf(state.windowFunction); state.windowFunction=o[(i+1)%o.length]; break; }
     case "F": { const o:WindowFn[]=["hann","hamming","blackman-harris"]; const i=o.indexOf(state.windowFunction); state.windowFunction=o[(i-1+o.length)%o.length]; break; }
-    case "l": state.lrange=Math.min(state.lrange+1, state.urange-1); handled=true; render(); return;
-    case "L": state.lrange=Math.max(state.lrange-1, MIN_RANGE); handled=true; render(); return;
-    case "p": { const o:Palette[]=["spectrum","sox","mono"]; const i=o.indexOf(state.palette); state.palette=o[(i+1)%o.length]; handled=true; render(); return; }
-    case "P": { const o:Palette[]=["spectrum","sox","mono"]; const i=o.indexOf(state.palette); state.palette=o[(i-1+o.length)%o.length]; handled=true; render(); return; }
+    case "l": state.lrange=Math.min(state.lrange+1, state.urange-1); rebuildOffscreenFromState(); render(); return;
+    case "L": state.lrange=Math.max(state.lrange-1, MIN_RANGE); rebuildOffscreenFromState(); render(); return;
+    case "p": { const o:Palette[]=["spectrum","sox","mono"]; const i=o.indexOf(state.palette); state.palette=o[(i+1)%o.length]; rebuildOffscreenFromState(); render(); return; }
+    case "P": { const o:Palette[]=["spectrum","sox","mono"]; const i=o.indexOf(state.palette); state.palette=o[(i-1+o.length)%o.length]; rebuildOffscreenFromState(); render(); return; }
     case "s": if(state.streams) state.stream=(state.stream+1)%state.streams; break;
     case "S": if(state.streams) state.stream=(state.stream-1+state.streams)%state.streams; break;
-    case "u": state.urange=Math.min(state.urange+1, MAX_RANGE); handled=true; render(); return;
-    case "U": state.urange=Math.max(state.urange-1, state.lrange+1); handled=true; render(); return;
+    case "u": state.urange=Math.min(state.urange+1, MAX_RANGE); rebuildOffscreenFromState(); render(); return;
+    case "U": state.urange=Math.max(state.urange-1, state.lrange+1); rebuildOffscreenFromState(); render(); return;
     case "w": state.fftBits=Math.min(state.fftBits+1, MAX_FFT_BITS); break;
     case "W": state.fftBits=Math.max(state.fftBits-1, MIN_FFT_BITS); break;
     default: handled=false;

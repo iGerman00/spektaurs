@@ -32,6 +32,7 @@ anyhow = "1"
 thiserror = "2"
 reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls-manual-roots"], default-features = false }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync"] }
+rayon = "1"
 image = { version = "0.25", features = ["png"] }
 log = "0.4"
 env_logger = "0.11"
