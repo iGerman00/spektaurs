@@ -43,7 +43,7 @@ impl std::fmt::Display for AudioError {
             AudioError::CannotOpenDecoder => "Cannot open decoder",
             AudioError::BadSampleFormat => "Unsupported sample format",
         };
-        write!(f, "{}", msg)
+        f.write_str(msg)
     }
 }
 
@@ -874,19 +874,26 @@ mod tests {
     use std::path::PathBuf;
 
     fn samples_dir() -> PathBuf {
-        // Try multiple locations: original spek tests directory and temp
+        if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+            let p = PathBuf::from(&manifest).join("../tests/samples");
+            if p.exists() {
+                return p;
+            }
+            let p2 = PathBuf::from(&manifest).join("tests/samples");
+            if p2.exists() {
+                return p2;
+            }
+        }
         let candidates = [
-            PathBuf::from("/home/igmn/spek/tests/samples"),
             PathBuf::from("tests/samples"),
-            PathBuf::from("../spek/tests/samples"),
-            PathBuf::from("/tmp/spek_tests/samples"),
+            PathBuf::from("../tests/samples"),
         ];
         for c in candidates {
             if c.exists() {
                 return c;
             }
         }
-        PathBuf::from("/home/igmn/spek/tests/samples")
+        PathBuf::from("tests/samples")
     }
 
     #[test]

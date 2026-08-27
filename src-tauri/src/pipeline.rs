@@ -487,7 +487,7 @@ where
             );
 
         for (i, task) in chunk_tasks.iter().enumerate() {
-            let col = &magnitudes[(start_idx + i) * bands..(start_idx + i + 1) * bands];
+            let col: &[f32] = &magnitudes[(start_idx + i) * bands..(start_idx + i + 1) * bands];
             emit(task.sample_idx, bands, col);
         }
     }

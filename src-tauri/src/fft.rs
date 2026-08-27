@@ -130,12 +130,11 @@ impl FftPlan {
         let nyq = scratch[self.n / 2].re;
         self.output[self.n / 2] = 10.0 * (nyq * nyq / n2).log10();
 
-        for i in 1..self.n / 2 {
-            let re = scratch[i].re;
-            let im = scratch[i].im;
+        for (out, &c) in self.output[1..self.n / 2].iter_mut().zip(&scratch[1..self.n / 2]) {
+            let re = c.re;
+            let im = c.im;
             let mag = re * re + im * im;
-            let val = 10.0 * (mag / n2).log10();
-            self.output[i] = val;
+            *out = 10.0 * (mag / n2).log10();
         }
 
         // Preserve -inf for silence (do not clamp to -200) to match reference C++ behavior

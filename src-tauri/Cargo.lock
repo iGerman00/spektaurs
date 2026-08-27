@@ -4318,7 +4318,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "spek-tauri"
+name = "spektaurs"
 version = "0.8.5"
 dependencies = [
  "anyhow",

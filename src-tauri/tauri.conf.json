@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Spek",
+  "productName": "Spektaurs",
   "version": "0.8.5",
-  "identifier": "cc.spek.spek",
+  "identifier": "cc.spek.spektaurs",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Spek - Acoustic Spectrum Analyser",
+        "title": "Spektaurs - Acoustic Spectrum Analyser",
         "width": 960,
         "height": 640,
         "minWidth": 640,
