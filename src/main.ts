@@ -23,8 +23,9 @@ interface SpectrogramResult {
   error: string;
 }
 
-interface ProgressPayload {
-  sample: number;
+interface ProgressBatchPayload {
+  start_sample: number;
+  count: number;
   bands: number;
   data_u8: number[];
 }
@@ -338,27 +339,17 @@ function updateRemapLUT() {
 }
 
 function downsampleColumnToDisplay(raw: Uint8Array, colBase: number, bands: number, displayHeight: number, d32: Uint32Array, x: number, samples: number, remap: Uint32Array) {
-  // Area-maximum downsampling: map each display row to a range of source bands
-  // Using MAX instead of average preserves thin harmonic lines that span only 1-2 bins
+  const step = (bands - 1) / Math.max(1, displayHeight - 1);
   for (let dy = 0; dy < displayHeight; dy++) {
-    // Display row dy maps to frequency range. Y=0 is top (highest freq), Y=displayHeight-1 is bottom (lowest freq)
-    // In raw data, index 0 = lowest freq, index bands-1 = highest freq
-    // Display is flipped: display row 0 = band (bands-1), display row (displayHeight-1) = band 0
-    const srcTop = (1.0 - dy / displayHeight) * bands;
-    const srcBot = (1.0 - (dy + 1) / displayHeight) * bands;
-    const yStart = Math.max(0, Math.floor(srcBot));
-    const yEnd = Math.min(bands, Math.ceil(srcTop));
-    if (yEnd <= yStart) {
-      d32[dy * samples + x] = remap[0];
-      continue;
-    }
-    // Take the maximum raw quantized value across the source band range
-    let maxVal = 0;
-    for (let y = yStart; y < yEnd; y++) {
-      const v = raw[colBase + y];
-      if (v > maxVal) maxVal = v;
-    }
-    d32[dy * samples + x] = remap[maxVal];
+    // Y=0 is top (highest freq, band bands-1), Y=displayHeight-1 is bottom (lowest freq, band 0)
+    const f = (displayHeight - 1 - dy) * step;
+    const f0 = Math.floor(f);
+    const f1 = Math.min(bands - 1, f0 + 1);
+    const t = f - f0;
+    const v0 = raw[colBase + f0];
+    const v1 = raw[colBase + f1];
+    const v = Math.round(v0 * (1 - t) + v1 * t);
+    d32[dy * samples + x] = remap[v];
   }
 }
 
@@ -623,32 +614,31 @@ async function analyzeCurrent() {
 
   if (showPreview) {
     try {
-      unlisten = await listen<ProgressPayload>("spectrogram-progress", (ev) => {
+      unlisten = await listen<ProgressBatchPayload>("spectrogram-progress-batch", (ev) => {
         if (myGen !== generation) return;
         const p = ev.payload;
         if (p.bands !== bands || !offscreenData32 || !rawQuantized) return;
-        const colBase = p.sample * bands;
-        const u8 = p.data_u8;
-        // Store in full-res rawQuantized
-        if (rawQuantized) {
-          for (let y = 0; y < bands; y++) {
-            rawQuantized[colBase + y] = u8[y];
+        // Zero-copy batch set into full-res rawQuantized buffer
+        rawQuantized.set(p.data_u8, p.start_sample * bands);
+
+        // Downsample only the columns in this batch
+        for (let c = 0; c < p.count; c++) {
+          const s = p.start_sample + c;
+          if (s < samples) {
+            downsampleColumnToDisplay(rawQuantized, s * bands, bands, displayHeight, offscreenData32, s, samples, currentRemapLUT);
           }
         }
-        // Downsample to display resolution
-        if (offscreenData32 && rawQuantized) {
-          downsampleColumnToDisplay(rawQuantized, colBase, bands, displayHeight, offscreenData32, p.sample, samples, currentRemapLUT);
-          offscreenDirty = true;
-        }
+        offscreenDirty = true;
 
-        if (!rafScheduled || p.sample + 1 === samples) {
+        const lastSample = p.start_sample + p.count;
+        if (!rafScheduled || lastSample >= samples) {
           rafScheduled = true;
           requestAnimationFrame(() => {
             rafScheduled = false;
             if (myGen === generation) {
               render();
               if (loadingText) {
-                loadingText.textContent = `${t("Analysing…")} ${Math.round(((p.sample + 1) / samples) * 100)}%`;
+                loadingText.textContent = `${t("Analysing…")} ${Math.min(100, Math.round((lastSample / samples) * 100))}%`;
               }
             }
           });

@@ -188,18 +188,18 @@ where
     run_pipeline_with_emit_cancel(info, window_function, fft_bits, samples, channel, stream, emit, || false)
 }
 
-pub fn run_pipeline_with_emit_cancel<F, C>(
+pub fn run_pipeline_with_batch_emit_cancel<F, C>(
     info: AudioFileInfo,
     window_function: WindowFunction,
     fft_bits: usize,
     samples: usize,
     channel: usize,
     stream: usize,
-    mut emit: F,
+    mut emit_batch: F,
     is_cancelled: C,
 ) -> SpectrogramResult
 where
-    F: FnMut(usize, usize, &[f32]),
+    F: FnMut(usize, usize, usize, &[u8]),
     C: Fn() -> bool,
 {
     if info.error != crate::audio::AudioError::Ok {
@@ -299,6 +299,165 @@ where
     let mut magnitudes = vec![0.0f32; samples * bands];
 
     // Parallel processing across chunks with Rayon (utilizing all 16 cores)
+    const BATCH_SIZE: usize = 32;
+    for chunk_tasks in tasks.chunks(BATCH_SIZE) {
+        if is_cancelled() {
+            break;
+        }
+        let start_idx = chunk_tasks[0].sample_idx;
+        let count = chunk_tasks.len();
+        let slice = &mut magnitudes[start_idx * bands..(start_idx + count) * bands];
+
+        slice
+            .par_chunks_mut(bands)
+            .zip(chunk_tasks.par_iter())
+            .for_each_init(
+                || FftPlan::new(fft_bits),
+                |fft_plan, (out_chunk, task)| {
+                    compute_interval_output(
+                        task,
+                        &pcm,
+                        &coss,
+                        window_function,
+                        fft_plan,
+                        nfft,
+                        bands,
+                        out_chunk,
+                    );
+                },
+            );
+
+        let mut batch_u8 = Vec::with_capacity(count * bands);
+        for &v in slice.iter() {
+            batch_u8.push(quantize_magnitude_to_u8(v));
+        }
+        emit_batch(start_idx, count, bands, &batch_u8);
+    }
+
+    SpectrogramResult {
+        bands,
+        samples,
+        sample_rate: info.sample_rate,
+        duration: info.duration,
+        codec_name: info.codec_name.clone(),
+        bit_rate: info.bit_rate,
+        bits_per_sample: info.bits_per_sample,
+        channels: info.channels,
+        streams: info.streams,
+        desc: pipeline_desc(&info, stream, channel, window_function, fft_bits),
+        magnitudes,
+        error: String::new(),
+    }
+}
+
+pub fn run_pipeline_with_emit_cancel<F, C>(
+    info: AudioFileInfo,
+    window_function: WindowFunction,
+    fft_bits: usize,
+    samples: usize,
+    channel: usize,
+    stream: usize,
+    mut emit: F,
+    is_cancelled: C,
+) -> SpectrogramResult
+where
+    F: FnMut(usize, usize, &[f32]),
+    C: Fn() -> bool,
+{
+    if info.error != crate::audio::AudioError::Ok {
+        return SpectrogramResult::error_result(&info);
+    }
+    if samples == 0 {
+        return SpectrogramResult {
+            bands: bits_to_bands(fft_bits),
+            samples: 0,
+            sample_rate: info.sample_rate,
+            duration: info.duration,
+            codec_name: info.codec_name.clone(),
+            bit_rate: info.bit_rate,
+            bits_per_sample: info.bits_per_sample,
+            channels: info.channels,
+            streams: info.streams,
+            desc: pipeline_desc(&info, stream, channel, window_function, fft_bits),
+            magnitudes: vec![],
+            error: String::new(),
+        };
+    }
+    let pcm = crate::audio::extract_channel(&info.pcm, info.channels, channel);
+    let total_frames = pcm.len();
+    if total_frames == 0 {
+        return SpectrogramResult {
+            bands: bits_to_bands(fft_bits),
+            samples,
+            sample_rate: info.sample_rate,
+            duration: info.duration,
+            codec_name: info.codec_name.clone(),
+            bit_rate: info.bit_rate,
+            bits_per_sample: info.bits_per_sample,
+            channels: info.channels,
+            streams: info.streams,
+            desc: pipeline_desc(&info, stream, channel, window_function, fft_bits),
+            magnitudes: vec![0.0; samples * bits_to_bands(fft_bits)],
+            error: String::new(),
+        };
+    }
+    let nfft = 1usize << fft_bits;
+    let bands = bits_to_bands(fft_bits);
+    let coss = precompute_coss(nfft);
+
+    let total_i64 = total_frames as i64;
+    let samples_i64 = samples as i64;
+    let frames_per_interval = total_i64 / samples_i64;
+    let error_per_interval = total_i64 % samples_i64;
+    let error_base = samples_i64;
+
+    let mut tasks: Vec<IntervalTask> = Vec::with_capacity(samples);
+    let mut cur_heads: Vec<usize> = Vec::new();
+    let mut frames: i64 = 0;
+    let mut num_fft: usize = 0;
+    let mut acc_error: i64 = 0;
+    let mut sample_idx: usize = 0;
+    let mut head: usize = 0;
+
+    while head < total_frames && sample_idx < samples {
+        frames += 1;
+        let int_full = acc_error < error_base && frames == frames_per_interval;
+        let int_over = acc_error >= error_base && frames == 1 + frames_per_interval;
+        let should_fft = (frames % nfft as i64 == 0) || ((int_full || int_over) && num_fft == 0);
+        if should_fft {
+            cur_heads.push(head);
+            num_fft += 1;
+        }
+        if int_full || int_over {
+            if int_over {
+                acc_error -= error_base;
+            } else {
+                acc_error += error_per_interval;
+            }
+            tasks.push(IntervalTask {
+                sample_idx,
+                heads: std::mem::take(&mut cur_heads),
+            });
+            sample_idx += 1;
+            frames = 0;
+            num_fft = 0;
+            if sample_idx >= samples {
+                break;
+            }
+        }
+        head += 1;
+    }
+
+    while tasks.len() < samples {
+        let s = tasks.len();
+        tasks.push(IntervalTask {
+            sample_idx: s,
+            heads: Vec::new(),
+        });
+    }
+
+    let mut magnitudes = vec![0.0f32; samples * bands];
+
     const BATCH_SIZE: usize = 16;
     for chunk_tasks in tasks.chunks(BATCH_SIZE) {
         if is_cancelled() {

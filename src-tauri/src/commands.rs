@@ -79,8 +79,9 @@ pub struct AnalyzeParams {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-struct ProgressPayload {
-    sample: usize,
+struct ProgressBatchPayload {
+    start_sample: usize,
+    count: usize,
     bands: usize,
     data_u8: Vec<u8>,
 }
@@ -154,19 +155,16 @@ pub async fn analyze_audio(
         }
 
         if show_preview {
-            let emit = |sample: usize, bands: usize, values: &[f32]| {
-                let mut data_u8 = Vec::with_capacity(bands);
-                for &v in values {
-                    data_u8.push(crate::pipeline::quantize_magnitude_to_u8(v));
-                }
-                let payload = ProgressPayload {
-                    sample,
+            let emit_batch = |start_sample: usize, count: usize, bands: usize, data_u8: &[u8]| {
+                let payload = ProgressBatchPayload {
+                    start_sample,
+                    count,
                     bands,
-                    data_u8,
+                    data_u8: data_u8.to_vec(),
                 };
-                let _ = window_clone.emit("spectrogram-progress", &payload);
+                let _ = window_clone.emit("spectrogram-progress-batch", &payload);
             };
-            let mut res = crate::pipeline::run_pipeline_with_emit_cancel(info, wf, fft_bits, samples, channel, stream, emit, is_cancelled);
+            let mut res = crate::pipeline::run_pipeline_with_batch_emit_cancel(info, wf, fft_bits, samples, channel, stream, emit_batch, is_cancelled);
             res.magnitudes = vec![];
             res
         } else {
