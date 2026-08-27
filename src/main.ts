@@ -313,6 +313,8 @@ function getPaletteStripCanvas(palette: Palette, fftBits: number): HTMLCanvasEle
   return pOff;
 }
 
+let rawQuantized: Uint8Array | null = null;
+
 function ensureOffscreen(samples: number, bands: number, keepContent = true) {
   if (offscreen && offscreen.width === samples && offscreen.height === bands) return;
   const oldOffscreen = offscreen;
@@ -322,12 +324,16 @@ function ensureOffscreen(samples: number, bands: number, keepContent = true) {
   offscreenCtx = offscreen.getContext("2d", { willReadFrequently: true } as any) as CanvasRenderingContext2D | null;
   if (offscreenCtx) {
     if (oldOffscreen && keepContent && oldOffscreen.width > 0 && oldOffscreen.height > 0) {
-      offscreenCtx.imageSmoothingEnabled = false;
+      offscreenCtx.imageSmoothingEnabled = true;
+      offscreenCtx.imageSmoothingQuality = "high";
       offscreenCtx.drawImage(oldOffscreen, 0, 0, samples, bands);
     } else {
       offscreenCtx.fillStyle = "black";
       offscreenCtx.fillRect(0, 0, samples, bands);
     }
+  }
+  if (!rawQuantized || rawQuantized.length !== samples * bands) {
+    rawQuantized = new Uint8Array(samples * bands);
   }
   cachedColImageData = null;
   cachedColData32 = null;
@@ -342,13 +348,23 @@ function updateOffscreenColumn(sample: number, bands: number, values: number[]) 
     cachedColImageData = offscreenCtx.createImageData(1, bands);
     cachedColData32 = new Uint32Array(cachedColImageData.data.buffer);
   }
+  if (!rawQuantized || rawQuantized.length !== state.samples * bands) {
+    rawQuantized = new Uint8Array(state.samples * bands);
+  }
   const d32 = cachedColData32!;
   const range = state.urange - state.lrange;
   const lutABGR = getPaletteLutABGR(state.palette);
+  const colBase = sample * bands;
   for (let y = 0; y < bands; y++) {
     const v = values[y];
     // Silence (-inf, null, NaN, undefined, or below lrange) must strictly map to state.lrange (level 0 = black)
     const isSilence = v === null || v === undefined || typeof v !== "number" || !isFinite(v) || v <= state.lrange;
+    let q = 0;
+    if (!isSilence) {
+      q = Math.max(1, Math.min(255, Math.floor(((Math.min(0, v) + 140.0) / 140.0) * 254.0) + 1));
+    }
+    rawQuantized[colBase + y] = q;
+
     const clamped = isSilence ? state.lrange : Math.min(state.urange, v);
     const level = isSilence ? 0 : (range === 0 ? 0 : (clamped - state.lrange) / range);
     const idx = Math.max(0, Math.min(255, Math.floor(level * 255)));
@@ -369,18 +385,38 @@ function rebuildOffscreenFromState() {
   const range = state.urange - state.lrange;
   const bands = state.bands, samples = state.samples;
   const lutABGR = getPaletteLutABGR(state.palette);
+  
+  // Fast 256-entry remap LUT for instantaneous 165Hz recoloring
+  const remapLUT = new Uint32Array(256);
+  remapLUT[0] = lutABGR[0]; // silence = black
+  for (let i = 1; i < 256; i++) {
+    const db = -140.0 + ((i - 1) / 254.0) * 140.0;
+    const clamped = Math.max(state.lrange, Math.min(state.urange, db));
+    const level = range === 0 ? 0 : (clamped - state.lrange) / range;
+    const idx = Math.max(0, Math.min(255, Math.floor(level * 255)));
+    remapLUT[i] = lutABGR[idx];
+  }
+
+  if (!rawQuantized || rawQuantized.length !== samples * bands) {
+    rawQuantized = new Uint8Array(samples * bands);
+    for (let i = 0; i < samples * bands; i++) {
+      const v = state.magnitudes[i];
+      if (v === null || v === undefined || typeof v !== "number" || !isFinite(v) || v <= -140.0) {
+        rawQuantized[i] = 0;
+      } else {
+        rawQuantized[i] = Math.max(1, Math.min(255, Math.floor(((Math.min(0, v) + 140.0) / 140.0) * 254.0) + 1));
+      }
+    }
+  }
+
   const imgData = offscreenCtx.createImageData(samples, bands);
   const d32 = new Uint32Array(imgData.data.buffer);
+  const raw = rawQuantized;
   for (let x = 0; x < samples; x++) {
     const base = x * bands;
     for (let y = 0; y < bands; y++) {
-      const v = state.magnitudes[base + y];
-      const isSilence = v === null || v === undefined || typeof v !== "number" || !isFinite(v) || v <= state.lrange;
-      const clamped = isSilence ? state.lrange : Math.min(state.urange, v);
-      const level = isSilence ? 0 : (range === 0 ? 0 : (clamped - state.lrange) / range);
-      const idx = Math.max(0, Math.min(255, Math.floor(level * 255)));
       const yy = bands - y - 1;
-      d32[yy * samples + x] = lutABGR[idx];
+      d32[yy * samples + x] = remapLUT[raw[base + y]];
     }
   }
   offscreenCtx.putImageData(imgData, 0, 0);
@@ -414,7 +450,9 @@ function renderScene(c: CanvasRenderingContext2D, w: number, h: number) {
   const hasImage = state.samples > 0 && state.bands > 1 && offscreen && w - LPAD - RPAD > 0 && h - TPAD - BPAD > 0;
   if (hasImage) {
     const imgW = w - LPAD - RPAD, imgH = h - TPAD - BPAD;
-    c.imageSmoothingEnabled = false;
+    // Enable high-quality bilinear filtering so 16k DFT (8193 bands) displays all fine harmonic details without aliasing
+    c.imageSmoothingEnabled = true;
+    c.imageSmoothingQuality = "high";
     c.drawImage(offscreen!, LPAD, TPAD, imgW, imgH);
 
     // File name and description
@@ -786,26 +824,49 @@ async function handleAction(action:string){
     case "about": await openAbout(); break;
   }
 }
-function handleKey(e:KeyboardEvent){
-  let handled=true;
-  switch(e.key){
-    case "c": if(state.channels) state.channel=(state.channel+1)%state.channels; break;
-    case "C": if(state.channels) state.channel=(state.channel-1+state.channels)%state.channels; break;
-    case "f": { const o:WindowFn[]=["hann","hamming","blackman-harris"]; const i=o.indexOf(state.windowFunction); state.windowFunction=o[(i+1)%o.length]; break; }
-    case "F": { const o:WindowFn[]=["hann","hamming","blackman-harris"]; const i=o.indexOf(state.windowFunction); state.windowFunction=o[(i-1+o.length)%o.length]; break; }
-    case "l": state.lrange=Math.min(state.lrange+1, state.urange-1); rebuildOffscreenFromState(); render(); return;
-    case "L": state.lrange=Math.max(state.lrange-1, MIN_RANGE); rebuildOffscreenFromState(); render(); return;
-    case "p": { const o:Palette[]=["spectrum","sox","mono"]; const i=o.indexOf(state.palette); state.palette=o[(i+1)%o.length]; rebuildOffscreenFromState(); render(); return; }
-    case "P": { const o:Palette[]=["spectrum","sox","mono"]; const i=o.indexOf(state.palette); state.palette=o[(i-1+o.length)%o.length]; rebuildOffscreenFromState(); render(); return; }
-    case "s": if(state.streams) state.stream=(state.stream+1)%state.streams; break;
-    case "S": if(state.streams) state.stream=(state.stream-1+state.streams)%state.streams; break;
-    case "u": state.urange=Math.min(state.urange+1, MAX_RANGE); rebuildOffscreenFromState(); render(); return;
-    case "U": state.urange=Math.max(state.urange-1, state.lrange+1); rebuildOffscreenFromState(); render(); return;
-    case "w": state.fftBits=Math.min(state.fftBits+1, MAX_FFT_BITS); break;
-    case "W": state.fftBits=Math.max(state.fftBits-1, MIN_FFT_BITS); break;
-    default: handled=false;
+let recolorRafPending = false;
+function scheduleRecolor() {
+  if (!recolorRafPending) {
+    recolorRafPending = true;
+    requestAnimationFrame(() => {
+      recolorRafPending = false;
+      rebuildOffscreenFromState();
+      render();
+    });
   }
-  if(handled){ e.preventDefault(); if(["c","C","f","F","s","S","w","W"].includes(e.key)) { cachedKey=""; analyzeCurrent(); } }
+}
+
+let analyzeDebounceTimer: number | undefined;
+function debouncedAnalyze(delay = 50) {
+  clearTimeout(analyzeDebounceTimer);
+  analyzeDebounceTimer = window.setTimeout(() => {
+    cachedKey = "";
+    analyzeCurrent();
+  }, delay);
+}
+
+function handleKey(e: KeyboardEvent) {
+  let handled = true;
+  switch (e.key) {
+    case "c": if (state.channels) { state.channel = (state.channel + 1) % state.channels; debouncedAnalyze(); } break;
+    case "C": if (state.channels) { state.channel = (state.channel - 1 + state.channels) % state.channels; debouncedAnalyze(); } break;
+    case "f": { const o: WindowFn[] = ["hann", "hamming", "blackman-harris"]; const i = o.indexOf(state.windowFunction); state.windowFunction = o[(i + 1) % o.length]; debouncedAnalyze(); break; }
+    case "F": { const o: WindowFn[] = ["hann", "hamming", "blackman-harris"]; const i = o.indexOf(state.windowFunction); state.windowFunction = o[(i - 1 + o.length) % o.length]; debouncedAnalyze(); break; }
+    case "l": state.lrange = Math.min(state.lrange + 1, state.urange - 1); scheduleRecolor(); break;
+    case "L": state.lrange = Math.max(state.lrange - 1, MIN_RANGE); scheduleRecolor(); break;
+    case "p": { const o: Palette[] = ["spectrum", "sox", "mono"]; const i = o.indexOf(state.palette); state.palette = o[(i + 1) % o.length]; scheduleRecolor(); break; }
+    case "P": { const o: Palette[] = ["spectrum", "sox", "mono"]; const i = o.indexOf(state.palette); state.palette = o[(i - 1 + o.length) % o.length]; scheduleRecolor(); break; }
+    case "s": if (state.streams) { state.stream = (state.stream + 1) % state.streams; debouncedAnalyze(); } break;
+    case "S": if (state.streams) { state.stream = (state.stream - 1 + state.streams) % state.streams; debouncedAnalyze(); } break;
+    case "u": state.urange = Math.min(state.urange + 1, MAX_RANGE); scheduleRecolor(); break;
+    case "U": state.urange = Math.max(state.urange - 1, state.lrange + 1); scheduleRecolor(); break;
+    case "w": state.fftBits = Math.min(state.fftBits + 1, MAX_FFT_BITS); debouncedAnalyze(); break;
+    case "W": state.fftBits = Math.max(state.fftBits - 1, MIN_FFT_BITS); debouncedAnalyze(); break;
+    default: handled = false;
+  }
+  if (handled) {
+    e.preventDefault();
+  }
 }
 
 window.addEventListener("DOMContentLoaded", async ()=>{

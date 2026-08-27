@@ -292,144 +292,138 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
 
         match decoder.decode(&packet) {
             Ok(decoded) => {
-                // Convert to f32
-                let mut buf: Vec<f32> = Vec::new();
                 match decoded {
                     AudioBufferRef::F32(b) => {
                         let spec = *b.spec();
                         let num_frames = b.chan(0).len();
-                        if num_frames == 0 {
-                            continue;
-                        }
+                        if num_frames == 0 { continue; }
+                        let ch_count = spec.channels.count();
+                        pcm_interleaved.reserve(num_frames * ch_count);
                         for frame in 0..num_frames {
-                            for ch in 0..spec.channels.count() {
-                                buf.push(b.chan(ch)[frame]);
+                            for ch in 0..ch_count {
+                                pcm_interleaved.push(b.chan(ch)[frame]);
                             }
                         }
-                        if buf.is_empty() {
-                            continue;
-                        }
                         decoded_frames += num_frames;
-                        pcm_interleaved.extend(buf);
                     }
                     AudioBufferRef::U8(b) => {
                         let spec = *b.spec();
                         let num_frames = b.chan(0).len();
                         if num_frames == 0 { continue; }
+                        let ch_count = spec.channels.count();
+                        pcm_interleaved.reserve(num_frames * ch_count);
                         for frame in 0..num_frames {
-                            for ch in 0..spec.channels.count() {
-                                let v = b.chan(ch)[frame] as f32 / i8::MAX as f32;
-                                buf.push(v);
+                            for ch in 0..ch_count {
+                                pcm_interleaved.push(b.chan(ch)[frame] as f32 / i8::MAX as f32);
                             }
                         }
                         decoded_frames += num_frames;
-                        pcm_interleaved.extend(buf);
                     }
                     AudioBufferRef::U16(b) => {
                         let spec = *b.spec();
                         let num_frames = b.chan(0).len();
                         if num_frames == 0 { continue; }
+                        let ch_count = spec.channels.count();
+                        pcm_interleaved.reserve(num_frames * ch_count);
                         for frame in 0..num_frames {
-                            for ch in 0..spec.channels.count() {
-                                let corrected = (b.chan(ch)[frame] as f32 - 32768.0) / 32768.0;
-                                buf.push(corrected);
+                            for ch in 0..ch_count {
+                                pcm_interleaved.push((b.chan(ch)[frame] as f32 - 32768.0) / 32768.0);
                             }
                         }
                         decoded_frames += num_frames;
-                        pcm_interleaved.extend(buf);
                     }
                     AudioBufferRef::U24(b) => {
                         let spec = *b.spec();
                         let num_frames = b.chan(0).len();
                         if num_frames == 0 { continue; }
+                        let ch_count = spec.channels.count();
+                        pcm_interleaved.reserve(num_frames * ch_count);
                         for frame in 0..num_frames {
-                            for ch in 0..spec.channels.count() {
+                            for ch in 0..ch_count {
                                 let sample = b.chan(ch)[frame].0;
-                                let corrected = (sample as f32 - 8388608.0) / 8388608.0;
-                                buf.push(corrected);
+                                pcm_interleaved.push((sample as f32 - 8388608.0) / 8388608.0);
                             }
                         }
                         decoded_frames += num_frames;
-                        pcm_interleaved.extend(buf);
                     }
                     AudioBufferRef::U32(b) => {
                         let spec = *b.spec();
                         let num_frames = b.chan(0).len();
                         if num_frames == 0 { continue; }
+                        let ch_count = spec.channels.count();
+                        pcm_interleaved.reserve(num_frames * ch_count);
                         for frame in 0..num_frames {
-                            for ch in 0..spec.channels.count() {
-                                let corrected = (b.chan(ch)[frame] as f32 - 2147483648.0) / 2147483648.0;
-                                buf.push(corrected);
+                            for ch in 0..ch_count {
+                                pcm_interleaved.push((b.chan(ch)[frame] as f32 - 2147483648.0) / 2147483648.0);
                             }
                         }
                         decoded_frames += num_frames;
-                        pcm_interleaved.extend(buf);
                     }
                     AudioBufferRef::S8(b) => {
                         let spec = *b.spec();
                         let num_frames = b.chan(0).len();
                         if num_frames == 0 { continue; }
+                        let ch_count = spec.channels.count();
+                        pcm_interleaved.reserve(num_frames * ch_count);
                         for frame in 0..num_frames {
-                            for ch in 0..spec.channels.count() {
-                                let v = b.chan(ch)[frame] as f32 / i8::MAX as f32;
-                                buf.push(v);
+                            for ch in 0..ch_count {
+                                pcm_interleaved.push(b.chan(ch)[frame] as f32 / i8::MAX as f32);
                             }
                         }
                         decoded_frames += num_frames;
-                        pcm_interleaved.extend(buf);
                     }
                     AudioBufferRef::S16(b) => {
                         let spec = *b.spec();
                         let num_frames = b.chan(0).len();
                         if num_frames == 0 { continue; }
+                        let ch_count = spec.channels.count();
+                        pcm_interleaved.reserve(num_frames * ch_count);
                         for frame in 0..num_frames {
-                            for ch in 0..spec.channels.count() {
-                                let v = b.chan(ch)[frame] as f32 / i16::MAX as f32;
-                                buf.push(v);
+                            for ch in 0..ch_count {
+                                pcm_interleaved.push(b.chan(ch)[frame] as f32 / i16::MAX as f32);
                             }
                         }
                         decoded_frames += num_frames;
-                        pcm_interleaved.extend(buf);
                     }
                     AudioBufferRef::S24(b) => {
                         let spec = *b.spec();
                         let num_frames = b.chan(0).len();
                         if num_frames == 0 { continue; }
+                        let ch_count = spec.channels.count();
+                        pcm_interleaved.reserve(num_frames * ch_count);
                         for frame in 0..num_frames {
-                            for ch in 0..spec.channels.count() {
+                            for ch in 0..ch_count {
                                 let raw = b.chan(ch)[frame].0;
-                                let v = raw as f32 / 8388607.0;
-                                buf.push(v);
+                                pcm_interleaved.push(raw as f32 / 8388607.0);
                             }
                         }
                         decoded_frames += num_frames;
-                        pcm_interleaved.extend(buf);
                     }
                     AudioBufferRef::S32(b) => {
                         let spec = *b.spec();
                         let num_frames = b.chan(0).len();
                         if num_frames == 0 { continue; }
+                        let ch_count = spec.channels.count();
+                        pcm_interleaved.reserve(num_frames * ch_count);
                         for frame in 0..num_frames {
-                            for ch in 0..spec.channels.count() {
-                                let v = b.chan(ch)[frame] as f32 / i32::MAX as f32;
-                                buf.push(v);
+                            for ch in 0..ch_count {
+                                pcm_interleaved.push(b.chan(ch)[frame] as f32 / i32::MAX as f32);
                             }
                         }
                         decoded_frames += num_frames;
-                        pcm_interleaved.extend(buf);
                     }
                     AudioBufferRef::F64(b) => {
                         let spec = *b.spec();
                         let num_frames = b.chan(0).len();
                         if num_frames == 0 { continue; }
+                        let ch_count = spec.channels.count();
+                        pcm_interleaved.reserve(num_frames * ch_count);
                         for frame in 0..num_frames {
-                            for ch in 0..spec.channels.count() {
-                                let v = b.chan(ch)[frame] as f32;
-                                buf.push(v);
+                            for ch in 0..ch_count {
+                                pcm_interleaved.push(b.chan(ch)[frame] as f32);
                             }
                         }
                         decoded_frames += num_frames;
-                        pcm_interleaved.extend(buf);
                     }
                 }
             }
@@ -459,7 +453,6 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
         error = AudioError::NoDuration;
     }
     // If we failed to decode any frames but file exists, maybe format unsupported -> try ffmpeg fallback
-    // We'll attempt ffmpeg fallback if error != Ok or pcm empty
     let mut final_pcm = pcm_interleaved;
     let mut final_frames = decoded_frames;
     let mut final_bit_rate = bit_rate;
@@ -481,9 +474,7 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
                 final_channels = ffmpeg_info.channels;
                 error = ffmpeg_info.error;
             } else if error == AudioError::NoChannels && ffmpeg_info.channels != 0 {
-                // Keep pcm but update channel count and clear error
                 final_channels = ffmpeg_info.channels;
-                // Also enrich missing bitrate etc
                 if final_bit_rate == 0 && ffmpeg_info.bit_rate != 0 {
                     final_bit_rate = ffmpeg_info.bit_rate;
                 }
@@ -493,18 +484,15 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
                 error = AudioError::Ok;
             }
         }
-    }
-
-    // Enrich codec name if it is generic/unknown (e.g., CodecType(4099))
-    if final_codec_name.contains("CodecType(") || final_codec_name.is_empty() || final_codec_name == "Unknown" {
-        if let Ok(ffmpeg_info) = try_ffmpeg_decode(path, stream_index) {
-            if !ffmpeg_info.codec_name.is_empty() && ffmpeg_info.codec_name != "Unknown" {
-                final_codec_name = ffmpeg_info.codec_name;
-                if final_bit_rate == 0 && ffmpeg_info.bit_rate != 0 {
-                    final_bit_rate = ffmpeg_info.bit_rate;
+    } else if final_codec_name.contains("CodecType(") || final_codec_name.is_empty() || final_codec_name == "Unknown" {
+        // Only run ffprobe for metadata enrichment if available (never full decode)
+        if let Some(fp) = which_ffprobe() {
+            if let Ok(probe) = get_ffprobe_info(&fp, path) {
+                if !probe.codec_name.is_empty() && probe.codec_name != "Unknown" {
+                    final_codec_name = probe.codec_name;
                 }
-                if final_channels == 0 && ffmpeg_info.channels != 0 {
-                    final_channels = ffmpeg_info.channels;
+                if final_bit_rate == 0 && probe.bit_rate != 0 {
+                    final_bit_rate = probe.bit_rate;
                 }
             }
         }

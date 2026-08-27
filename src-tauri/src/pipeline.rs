@@ -169,10 +169,27 @@ pub fn run_pipeline_with_emit<F>(
     samples: usize,
     channel: usize,
     stream: usize,
-    mut emit: F,
+    emit: F,
 ) -> SpectrogramResult
 where
     F: FnMut(usize, usize, &[f32]),
+{
+    run_pipeline_with_emit_cancel(info, window_function, fft_bits, samples, channel, stream, emit, || false)
+}
+
+pub fn run_pipeline_with_emit_cancel<F, C>(
+    info: AudioFileInfo,
+    window_function: WindowFunction,
+    fft_bits: usize,
+    samples: usize,
+    channel: usize,
+    stream: usize,
+    mut emit: F,
+    is_cancelled: C,
+) -> SpectrogramResult
+where
+    F: FnMut(usize, usize, &[f32]),
+    C: Fn() -> bool,
 {
     if info.error != crate::audio::AudioError::Ok {
         return SpectrogramResult::error_result(&info);
@@ -193,10 +210,23 @@ where
             error: String::new(),
         };
     }
-    let pcm = extract_channel(&info.pcm, info.channels, channel);
+    let pcm = crate::audio::extract_channel(&info.pcm, info.channels, channel);
     let total_frames = pcm.len();
     if total_frames == 0 {
-        return SpectrogramResult::error_result(&info);
+        return SpectrogramResult {
+            bands: bits_to_bands(fft_bits),
+            samples,
+            sample_rate: info.sample_rate,
+            duration: info.duration,
+            codec_name: info.codec_name.clone(),
+            bit_rate: info.bit_rate,
+            bits_per_sample: info.bits_per_sample,
+            channels: info.channels,
+            streams: info.streams,
+            desc: pipeline_desc(&info, stream, channel, window_function, fft_bits),
+            magnitudes: vec![0.0; samples * bits_to_bands(fft_bits)],
+            error: String::new(),
+        };
     }
     let nfft = 1usize << fft_bits;
     let bands = bits_to_bands(fft_bits);
@@ -260,6 +290,9 @@ where
     // Parallel processing across chunks with Rayon (utilizing all 16 cores)
     const BATCH_SIZE: usize = 16;
     for chunk_tasks in tasks.chunks(BATCH_SIZE) {
+        if is_cancelled() {
+            break;
+        }
         let start_idx = chunk_tasks[0].sample_idx;
         let count = chunk_tasks.len();
         let slice = &mut magnitudes[start_idx * bands..(start_idx + count) * bands];

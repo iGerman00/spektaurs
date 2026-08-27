@@ -85,6 +85,8 @@ struct ProgressPayload {
     values: Vec<f32>,
 }
 
+static ANALYSIS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[tauri::command]
 pub async fn analyze_audio(
     window: tauri::Window,
@@ -104,14 +106,35 @@ pub async fn analyze_audio(
         return Err(format!("fft_bits out of range 8..14: {}", fft_bits));
     }
 
+    // New generation counter for atomic cancellation
+    let current_gen = ANALYSIS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+
     // Clone for blocking task
     let path = params.path.clone();
     let window_clone = window.clone();
 
     // Heavy work offloaded to blocking thread pool so UI stays responsive
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let is_cancelled = move || ANALYSIS_GENERATION.load(std::sync::atomic::Ordering::Relaxed) != current_gen;
+
         // Open audio (may be slow for large files)
         let info = audio::open_audio_file(&path, stream);
+        if is_cancelled() {
+            return SpectrogramResult {
+                bands: crate::fft::bits_to_bands(fft_bits),
+                samples: 0,
+                sample_rate: info.sample_rate,
+                duration: info.duration,
+                codec_name: info.codec_name.clone(),
+                bit_rate: info.bit_rate,
+                bits_per_sample: info.bits_per_sample,
+                channels: info.channels,
+                streams: info.streams,
+                desc: String::new(),
+                magnitudes: vec![],
+                error: String::new(),
+            };
+        }
         if info.error != audio::AudioError::Ok && info.error != audio::AudioError::NoDuration {
             return SpectrogramResult::error_result(&info);
         }
@@ -130,7 +153,7 @@ pub async fn analyze_audio(
                 };
                 let _ = window_clone.emit("spectrogram-progress", &payload);
             };
-            let mut res = crate::pipeline::run_pipeline_with_emit(info, wf, fft_bits, samples, channel, stream, emit);
+            let mut res = crate::pipeline::run_pipeline_with_emit_cancel(info, wf, fft_bits, samples, channel, stream, emit, is_cancelled);
             // All magnitudes were already streamed column-by-column to frontend.
             // Clear magnitudes to avoid 150MB JSON serialization overhead that caused 2-3s delay at 100%!
             res.magnitudes = vec![];
