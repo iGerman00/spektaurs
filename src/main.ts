@@ -769,7 +769,6 @@ async function saveSpectrogram() {
   const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
   const { writeFile } = await import("@tauri-apps/plugin-fs");
   try {
-    // @ts-ignore
     await writeFile(selected, bytes);
     showToast("Saved to " + selected);
   } catch {
@@ -801,9 +800,9 @@ async function openPreferences() {
   const curLang:string=await invoke("get_language"); const checkVal:boolean=await invoke("get_check_update");
   const defaults:any = await invoke("get_default_settings");
   checkUpdate.checked=checkVal;
-  if (showPreview) (showPreview as any).checked = defaults.show_preview !== false;
+  if (showPreview) showPreview.checked = defaults.show_preview !== false;
   if (showShortcuts) {
-    (showShortcuts as any).checked = defaults.show_shortcuts !== false;
+    showShortcuts.checked = defaults.show_shortcuts !== false;
     showShortcuts.onchange = () => {
       if (hintEl) {
         hintEl.classList.toggle("hidden", !showShortcuts.checked);
@@ -822,11 +821,11 @@ async function openPreferences() {
     const sel=langSelect.value;
     await invoke("set_language",{value:sel});
     await invoke("set_check_update",{value:checkUpdate.checked});
-    const shortcutsOn = showShortcuts ? (showShortcuts as any).checked : true;
+    const shortcutsOn = showShortcuts ? showShortcuts.checked : true;
     await invoke("set_default_settings",{settings:{
       window_function: prefWindow.value, fft_bits: parseInt(prefDft.value), palette: prefPalette.value,
       lrange: parseInt(prefLow.value), urange: parseInt(prefHigh.value),
-      show_preview: showPreview ? (showPreview as any).checked : true,
+      show_preview: showPreview ? showPreview.checked : true,
       show_shortcuts: shortcutsOn,
       save_resolution: prefSaveRes.value
     }});

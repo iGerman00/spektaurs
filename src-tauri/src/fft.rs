@@ -3,17 +3,12 @@ use rustfft::num_complex::Complex;
 use std::sync::Arc;
 
 /// Window function matching spek-pipeline.h
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WindowFunction {
+    #[default]
     Hann = 0,
     Hamming = 1,
     BlackmanHarris = 2,
-}
-
-impl Default for WindowFunction {
-    fn default() -> Self {
-        WindowFunction::Hann
-    }
 }
 
 impl WindowFunction {

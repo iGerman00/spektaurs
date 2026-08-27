@@ -128,7 +128,7 @@ pub async fn analyze_audio(
             };
             let _ = window_decode.emit("spectrogram-decode-progress", percent);
         };
-        let info = audio::open_audio_file_with_cancel_and_progress(&path, stream, &is_cancelled, on_decode_progress);
+        let info = audio::open_audio_file_with_cancel_and_progress(&path, stream, is_cancelled, on_decode_progress);
         if is_cancelled() {
             return SpectrogramResult {
                 bands: crate::fft::bits_to_bands(fft_bits),

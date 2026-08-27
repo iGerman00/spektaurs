@@ -16,8 +16,9 @@ fn audio_cache() -> &'static Mutex<HashMap<String, AudioFileInfo>> {
     AUDIO_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum AudioError {
+    #[default]
     Ok,
     CannotOpenFile,
     NoStreams,
@@ -27,12 +28,6 @@ pub enum AudioError {
     NoChannels,
     CannotOpenDecoder,
     BadSampleFormat,
-}
-
-impl Default for AudioError {
-    fn default() -> Self {
-        AudioError::Ok
-    }
 }
 
 impl std::fmt::Display for AudioError {
@@ -160,9 +155,7 @@ where
 
     let mut all_audio_tracks: Vec<usize> = Vec::new();
     for (idx, track) in format.tracks().iter().enumerate() {
-        if track.codec_params.sample_rate.is_some() {
-            all_audio_tracks.push(idx);
-        } else if track.codec_params.n_frames.is_some() {
+        if track.codec_params.sample_rate.is_some() || track.codec_params.n_frames.is_some() {
             all_audio_tracks.push(idx);
         }
     }
@@ -238,7 +231,7 @@ where
     };
 
     let decoder_opts = DecoderOptions { ..Default::default() };
-    let mut decoder = match symphonia::default::get_codecs().make(&params, &decoder_opts) {
+    let mut decoder = match symphonia::default::get_codecs().make(params, &decoder_opts) {
         Ok(d) => d,
         Err(_) => {
             return AudioFileInfo {
@@ -597,7 +590,7 @@ where
 
     let stream_arg = format!("0:a:{}", stream_index);
     let mut child = std::process::Command::new(ffmpeg)
-        .args(&[
+        .args([
             "-v", "error",
             "-i", path.to_str().unwrap_or(""),
             "-map", &stream_arg,
@@ -746,7 +739,7 @@ fn try_ffmpeg_decode(path: &Path, _stream_index: usize) -> Result<FfmpegInfo> {
     let stream_arg = format!("0:a:{}", _stream_index);
 
     let output = std::process::Command::new(&ffmpeg)
-        .args(&[
+        .args([
             "-v",
             "error",
             "-i",
@@ -805,7 +798,7 @@ struct ProbeInfo {
 
 fn get_ffprobe_info(ffprobe: &str, path: &Path) -> Result<ProbeInfo> {
     let output = std::process::Command::new(ffprobe)
-        .args(&[
+        .args([
             "-v",
             "error",
             "-select_streams",

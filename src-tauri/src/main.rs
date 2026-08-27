@@ -14,12 +14,13 @@ fn main() {
     }
     // If both Wayland and XWayland are available, prefer XWayland for WebKit stability
     // on KDE with klassy. User can override by setting GDK_BACKEND themselves.
-    if std::env::var("GDK_BACKEND").is_err() {
-        if std::env::var("WAYLAND_DISPLAY").is_ok() && std::env::var("DISPLAY").is_ok() {
-            // XWayland is available — use it. Native Wayland WebKit still has protocol
-            // errors with NVIDIA + KWin on EndeavourOS. This matches what many Tauri apps do.
-            std::env::set_var("GDK_BACKEND", "x11");
-        }
+    if std::env::var("GDK_BACKEND").is_err()
+        && std::env::var("WAYLAND_DISPLAY").is_ok()
+        && std::env::var("DISPLAY").is_ok()
+    {
+        // XWayland is available — use it. Native Wayland WebKit still has protocol
+        // errors with NVIDIA + KWin on EndeavourOS. This matches what many Tauri apps do.
+        std::env::set_var("GDK_BACKEND", "x11");
     }
     // Theme fix: klassy-dark index.theme lists places/64 but has no [places/64] section,
     // causing "Gtk-WARNING … has no size field" on every startup. Prefer breeze-dark

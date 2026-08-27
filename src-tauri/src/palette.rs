@@ -1,17 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Palette {
     Spectrum = 0,
+    #[default]
     Sox = 1,
     Mono = 2,
-}
-
-impl Default for Palette {
-    fn default() -> Self {
-        Palette::Sox
-    }
 }
 
 impl Palette {
