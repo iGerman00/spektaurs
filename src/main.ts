@@ -1015,8 +1015,11 @@ window.addEventListener("DOMContentLoaded", async ()=>{
   // Ctrl + Wheel: step FFT size (w / W)
   container.addEventListener("wheel", (e) => {
     e.preventDefault();
-    const dir = e.deltaY < 0 ? 1 : -1;
-    const step = e.altKey ? 5 : (Math.abs(e.deltaY) > 50 ? 2 : 1);
+    // In WebKit/Blink browsers, Shift+Wheel redirects vertical deltaY to deltaX
+    const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+    if (delta === 0) return;
+    const dir = delta < 0 ? 1 : -1;
+    const step = e.altKey ? 5 : (Math.abs(delta) > 50 ? 2 : 1);
 
     if (e.ctrlKey) {
       if (dir > 0) {
