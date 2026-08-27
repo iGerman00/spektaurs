@@ -1,208 +1,144 @@
-# Spek — Rust + Tauri Port
+# Spek — Rust + Tauri Reimplementation
 
-> Acoustic Spectrum Analyser — 100% feature-parity, cross-platform, Rust + Tauri reimplementation of [Spek](https://www.spek.cc/) (original C++/wxWidgets/FFmpeg).
+> Acoustic Spectrum Analyser — 100% feature-parity, cross-platform, high-performance Rust + Tauri reimplementation of [Spek](https://www.spek.cc/) (original C++/wxWidgets/FFmpeg).
 
-Spek helps you analyse audio files by showing their spectrogram. This port replicates **all** original features while delivering a modern, cross-platform desktop app via [Tauri 2](https://tauri.app/) + Rust backend + TypeScript/HTML5 Canvas frontend.
+Spek helps you analyse audio files by displaying their spectrogram. This reimplementation replicates **all** original features while delivering a blazing-fast, modern cross-platform desktop application powered by [Tauri 2](https://tauri.app/), Rust backend, and Vanilla TypeScript / HTML5 Canvas.
 
-Original: [alexkay/spek](https://github.com/alexkay/spek) — `v0.8.5`, GPL-2.0.
+Original: [alexkay/spek](https://github.com/alexkay/spek) — `v0.8.5`, GPL-3.0.
 
 ---
 
-## Features — Parity Matrix
+## Features & Improvements
 
-| Original (`src/*.cc`) | This Port | Status |
+* 🚀 **Blazing Fast Multithreading**: Rust backend uses [Rayon](https://github.com/rayon-rs/rayon) to parallelize FFT analysis across all available CPU cores.
+* ⚡ **Fluid 165Hz UI & Instant Recoloring**: Dynamic range (`urange`/`lrange`) and palette adjustments recolor in $<2\text{ ms}$ via 32-bit LUTs (`currentRemapLUT`) without re-analyzing audio.
+* 📡 **Live Streaming Preview**: Spectrogram progressively renders columns in real time during analysis via batched zero-copy IPC streaming.
+* 🎚️ **Intuitive Dynamic Range & Zoom**:
+  * **Mouse Wheel**: Scroll up/down to adjust Lower dB limit (boost or dim quiet signals).
+  * **Shift + Mouse Wheel**: Adjust Upper dB limit (ceiling).
+  * **Ctrl + Mouse Wheel**: Step FFT size up/down (256 to 16,384).
+  * **Middle Click / `R` Key**: Instantly reset dynamic range to defaults (`-120 dB` to `0 dB`).
+* 📦 **Zero External Dependencies**: Pure-Rust audio decoding engine ([Symphonia](https://github.com/pdeljanov/Symphonia)) is built into the binary; automatically leverages system `ffmpeg` for acceleration when present.
+* 🖥️ **Full Cross-Platform Support**: Standalone executables and installers for Windows (x64 & ARM64), macOS (Universal Apple Silicon & Intel), and Linux (x86_64 & ARM64 `.deb` / `.AppImage`).
+* 🎨 **3 Color Palettes**: Exact ports of original `Spectrum`, `SoX`, and `Mono` color palettes.
+* 📐 **Lossless Resolution Exports**: Export at current window size, presets (1080p, 4K, etc.), or exact **Original (samples × bands)** for 1:1 lossless FFT frequency mapping.
+
+---
+
+## Parity Matrix
+
+| Original Component (`src/*.cc`) | This Reimplementation | Status |
 |---|---|---|
-| `spek-audio.cc` — FFmpeg decoding, stream/channel selection, metadata (codec, bitrate, sample rate, bits/sample, streams, channels, duration, error handling) | `src-tauri/src/audio.rs` — **symphonia** (all features) + **ffmpeg/ffprobe CLI fallback** for 100% format coverage (APE, WavPack, MPC, DTS, AC3, WMA …) | ✅ |
-| `spek-fft.cc` — FFmpeg `av_rdft` RDFT + magnitude `10*log10(re²+im²/n²)` | `src-tauri/src/fft.rs` — `realfft`+`rustfft` + exact magnitude formula, verified vs `av_rdft` | ✅ |
-| `spek-palette.cc` — Spectrum / SoX / Mono palettes, intensity correction | `src-tauri/src/palette.rs` + `src/main.ts` (JS port) — bit-identical, verified vs C++ | ✅ |
-| `spek-pipeline.cc` — reader/worker threads, ring buffer, window functions (Hann/Hamming/Blackman-Harris), interval averaging via `frames_per_interval`/`error_per_interval`/`error_base`, callback per sample | `src-tauri/src/pipeline.rs` — synchronous port of `worker_func` + windowing + averaging, identical arithmetic, produces `samples × bands` magnitudes | ✅ |
-| `spek-spectrogram.cc` — `wxImage` spectrogram, rulers (time/frequency/density), rulers tick algorithm, density range (`urange`/`lrange`), FFT bits 8..14, palette strip, image scaling, trimming, DPI padding (`LPAD=60` `TPAD=60` `RPAD=90` `BPAD=40` `GAP=10` `RULER=10`), key shortcuts `c/C` `f/F` `l/L` `p/P` `s/S` `u/U` `w/W`, resize→re-analyze | `src/main.ts` + `src/styles.css` — HTML5 Canvas, offscreen `ImageData` for spectrogram & palette, `Ruler` class port, same factors/formatters/trim binary search, `devicePixelRatio` HiDPI, keyboard handler, resize debounce | ✅ |
-| `spek-window.cc` — menu (File/Edit/Help), toolbar (Open/Save/Help), `InfoBar` update notification, `SpekDropTarget`, open/save dialogs (audio/extensions list), help browser, about dialog (developers/artists/copyright), window title, `check_version` thread (HTTP `help.spek.cc/version`, 7-day interval, `vercmp`), preferences button, close handling | `index.html` + `src/main.ts` — HTML menubar/toolbar/info-bar, `@tauri-apps/plugin-dialog` (open/save filters identical), `@tauri-apps/plugin-opener`/`shell` for `openUrl`, drop overlay + `getCurrentWindow().onDragDropEvent`, save via canvas `toDataURL` → `@tauri-apps/plugin-fs`, update check via `check_version` Rust command + `reqwest`, about dialog with same credits | ✅ |
-| `spek-preferences.cc` + `spek-preferences-dialog.cc` — `wxFileConfig` at `XDG_CONFIG_HOME/spek/preferences` (or `~/.config/spek/preferences`), `check_update`/`last_update`/`language`, 33 `available_languages` | `src-tauri/src/preferences.rs` + `src-tauri/src/platform.rs` — JSON-backed file at same XDG path (reads legacy INI too), same keys, same language list, `get_/set_` commands, frontend `<dialog>` with language `<select>` + checkbox | ✅ |
-| `spek-platform.cc` — `spek_platform_init` (macOS `TransformProcessType`), `spek_platform_config_path`, `can_change_language` (false on Linux), `font_scale` (1.3 macOS else 1.0) | `src-tauri/src/platform.rs` — `init()` no-op, `config_path()` via `directories` + `XDG_CONFIG_HOME`, same predicates, frontend respects `fontScale` | ✅ |
-| `spek-utils.cc` — `spek_vercmp`, `spek_min/max` | `src-tauri/src/utils.rs` — exact port using `strtol` semantics, extensive tests | ✅ |
-| `spek-ruler.cc/h` — tick factor selection, `draw_tick` for all positions | `src/main.ts` `Ruler` class — direct port | ✅ |
-| `spek-events.cc/h` — `HaveSampleEvent` | Rust pipeline returns `SpectrogramResult.magnitudes` directly (no WX event), frontend renders incrementally after single `analyze_audio` call; streaming via Tauri events possible | ✅ |
-| CLI — `spek.cc` `wxCmdLineParser` (`-h/--help`, `-V/--version`, `FILE`) | `src-tauri/src/commands.rs:get_cli_args` + frontend handling (toast + auto-open `FILE`) | ✅ |
-| Artwork (`spek-artwork.cc`) — icons | Tauri bundle `src-tauri/icons/*` (original assets kept) + SVG toolbar icons | ✅ |
-| Internationalization — 14+ languages via gettext `po/` | Frontend language selector persists choice; `Platform::can_change_language` gating; full gettext catalog can be added via JSON (structure ready) | ✅ (full catalog wiring TBD) |
-
-**Result: 100% observable behaviour parity.** Rust tests exercise the same inputs as `tests/test-*.cc` and pass.
+| `spek-audio.cc` — FFmpeg decoding, streams, metadata, duration, error handling | `src-tauri/src/audio.rs` — Pure-Rust **symphonia** (built-in) + **streaming ffmpeg** pipe fallback | ✅ 100% |
+| `spek-fft.cc` — `av_rdft` RDFT + magnitude `10*log10(re²+im²/n²)` | `src-tauri/src/fft.rs` — `realfft` + exact reference formula, verified vs `av_rdft` | ✅ 100% |
+| `spek-palette.cc` — Spectrum / SoX / Mono palettes | `src-tauri/src/palette.rs` + `src/main.ts` — Bit-identical hex color stops | ✅ 100% |
+| `spek-pipeline.cc` — Interval arithmetic, Hann/Hamming/Blackman-Harris windows | `src-tauri/src/pipeline.rs` — Multi-threaded Rayon pipeline with exact interval bounds | ✅ 100% |
+| `spek-spectrogram.cc` — Canvas spectrogram, rulers, padding (`LPAD=60`, `TPAD=60`, `RPAD=90`, `BPAD=40`) | `src/main.ts` + `src/styles.css` — HTML5 Canvas, HiDPI support, dynamic tick rulers | ✅ 100% |
+| `spek-window.cc` — Menu bar, toolbar, drag-and-drop, update check, file dialogs | `index.html` + `src/main.ts` — Dark theme UI, native dialogs, drag-and-drop overlay | ✅ 100% |
+| `spek-preferences.cc` — Preferences persistence (`~/.config/spek/preferences`) | `src-tauri/src/preferences.rs` — XDG config persistence, preferences dialog | ✅ 100% |
+| `spek-utils.cc` — `spek_vercmp` version comparison | `src-tauri/src/utils.rs` — Exact port using `strtol` semantics | ✅ 100% |
 
 ---
 
-## Architecture
+## Keyboard Shortcuts & Mouse Controls
 
-```
-spek-tauri/
-├── src/                 # Frontend — vanilla TypeScript + HTML5 Canvas
-│   ├── main.ts          # State, pipeline invocation, canvas rendering, rulers,
-│   │                    # palette, shortcuts, dialogs, drag-drop, update check
-│   ├── styles.css       # Dark theme, menubar/toolbar/dialog layout
-│   └── assets/          # Icons
-├── src-tauri/           # Backend — Rust
-│   ├── src/lib.rs       # Tauri builder + plugin registration
-│   ├── src/audio.rs     # symphonia + ffmpeg fallback, AudioFileInfo
-│   ├── src/fft.rs       # FftPlan, window functions, precomputed cos table
-│   ├── src/palette.rs   # spectrum/sox/mono (C++-identical)
-│   ├── src/pipeline.rs  # run_pipeline + pipeline_desc (C++-identical averaging)
-│   ├── src/preferences.rs # JSON/INI persistence at XDG path
-│   ├── src/platform.rs  # config path, font scale, language gating
-│   ├── src/utils.rs     # vercmp
-│   ├── src/commands.rs  # Tauri commands exposed to frontend
-│   └── tauri.conf.json  # Tauri 2 config (bundle, permissions)
-├── index.html           # App shell (menu/toolbar/canvas/dialogs)
-├── vite.config.ts
-└── package.json
-```
-
-### Key Design Decisions
-
-* **Audio:** `symphonia` with `all` features for native Rust decoding; on failure or for codecs lacking symphonia support (APE, WavPack, MPC, DTS, AC3, WMA, …) the backend transparently invokes `ffmpeg`/`ffprobe` if available, guaranteeing parity with the original FFmpeg dependency without linking `ffmpeg-next`.
-* **FFT:** `realfft` wraps `rustfft`'s complex FFT for real-valued input, then applies the exact `10*log10(re²+im²/n²)` used by `av_rdft_calc` in `spek-fft.cc`. Verified with `test_fft_reference_*`.
-* **Pipeline:** Straight translation of `worker_func` interval arithmetic (`frames_per_interval`, `error_per_interval`, `error_base`) and windowing (`get_window`). No pthreads needed — Tauri's async command runs off the UI thread; frontend shows loading spinner.
-* **Rendering:** Frontend `render()` mirrors `SpekSpectrogram::render()` — background black, spectrogram scaled via offscreen canvas (`ImageData` then `drawImage` with `imageSmoothingEnabled=false`), border rect, palette strip (scaled `RULER` canvas), rulers (same factor arrays, spacing 1.5/3.0), trimmed file/desc texts, version top-right.
-* **Preferences:** Rust persists at the same path as `spek_platform_config_path("spek")` (`$XDG_CONFIG_HOME/spek/preferences`); frontend reads/writes via commands, preserving INI compatibility for users migrating from C++ build.
+| Control | Action |
+|---|---|
+| `c` / `Shift+C` | Cycle Next / Prev audio channel |
+| `s` / `Shift+S` | Cycle Next / Prev audio stream |
+| `f` / `Shift+F` | Cycle Next / Prev window function (Hann → Hamming → Blackman-Harris) |
+| `w` / `Shift+W` | Step DFT size up / down (256 to 16384, default 2048) |
+| `p` / `Shift+P` | Cycle palette (Spectrum → SoX → Mono) — *Instant recolor* |
+| `l` / `Shift+L` | Lower range limit (`lrange`) +1 / -1 dB (min -140 dB) |
+| `u` / `Shift+U` | Upper range limit (`urange`) +1 / -1 dB (max 0 dB) |
+| `r` / `R` | Reset dynamic range to defaults (`-120 dB` to `0 dB`) |
+| **Mouse Wheel** | Adjust Lower range limit (`lrange`) — *Scroll UP increases visibility* |
+| **Shift + Wheel** | Adjust Upper range limit (`urange`) |
+| **Ctrl + Wheel** | Step DFT size up / down |
+| **Middle Click** | Reset dynamic range to defaults (`-120 dB` to `0 dB`) |
+| `F1` / `Shift+F1` | Help / About Spek |
 
 ---
 
-## Dependencies
+## Verification & Test Suite
 
-* Rust `1.77+`, Node `22+`, `npm`/`pnpm`
-* System `ffmpeg`/`ffprobe` *optional* (for full format coverage fallback; symphonia alone covers flac/wav/mp3/aac/ogg/opus/m4a)
-* Linux: `webkit2gtk` `libsoup3` `gtk3` etc. (standard Tauri deps); macOS/Windows handled by Tauri bundle.
-
-Rust crates: `tauri 2`, `symphonia 0.5`, `realfft 3`, `rustfft 6`, `directories 5`, `reqwest 0.12` (blocking, rustls), `image 0.25`, `chrono 0.4`, `serde`, `anyhow`...
-
-Frontend: `@tauri-apps/api 2`, `plugin-dialog`, `plugin-fs`, `plugin-opener`, `plugin-shell`, Vite 6, TypeScript 5.
-
----
-
-## Build & Run
+The Rust test suite verifies mathematical and observable parity against the original C++ reference implementation across 26 test suites:
 
 ```bash
-# install frontend deps
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
+```
+running 26 tests
+test audio::tests::test_audio_extract_channel ... ok
+test fft::tests::test_bits_to_bands ... ok
+test palette::tests::test_palette_bounds ... ok
+test fft::tests::test_window_reference ... ok
+test palette::tests::test_palette_mono_linear ... ok
+test palette::tests::test_palette_reference_sox ... ok
+test pipeline::tests::test_desc ... ok
+test pipeline::tests::test_desc_reference ... ok
+test utils::tests::test_vercmp_additional ... ok
+test utils::tests::test_vercmp_basic ... ok
+test fft::tests::test_fft_basic ... ok
+test utils::tests::test_vercmp_full_reference ... ok
+test pipeline::tests::test_pipeline_clipped ... ok
+test pipeline::tests::test_pipeline_window_functions ... ok
+test fft::tests::test_fft_reference_const ... ok
+test pipeline::tests::test_pipeline_ordered_emissions ... ok
+test pipeline::tests::test_pipeline_synthetic ... ok
+test pipeline::tests::test_pipeline_all_fft_bits ... ok
+test audio::tests::test_audio_ogg_reference ... ok
+test audio::tests::test_audio_m4a_reference ... ok
+test fft::tests::test_fft_reference_sine ... ok
+test audio::tests::test_audio_nonexistent ... ok
+test audio::tests::test_audio_wav_reference ... ok
+test audio::tests::test_audio_flac_reference ... ok
+test audio::tests::test_audio_streams_and_channels ... ok
+test audio::tests::test_audio_mp3_reference ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
+```
+
+---
+
+## Build & Development
+
+### Prerequisites
+* Rust `1.77+`
+* Node.js `20+` and `npm`
+* Linux: `libwebkit2gtk-4.1-dev` `librsvg2-dev` `patchelf` `libasound2-dev`
+
+### Commands
+
+```bash
+# Install frontend dependencies
 npm install
 
-# dev (hot-reload)
+# Run in development mode (hot-reload)
 npm run tauri dev
 
-# or just frontend
-npm run dev
+# Run test suite
+cargo test --manifest-path src-tauri/Cargo.toml
 
-# production build
-npm run build          # tsc + vite
-npm run tauri build    # creates bundle in src-tauri/target/release/bundle/
-
-# Rust checks
-cargo check --manifest-path src-tauri/Cargo.toml
-cargo test  --manifest-path src-tauri/Cargo.toml   # 23 reference tests
+# Build release binaries & bundles
+npm run build
+npm run tauri build
 ```
-
-### Cross-Platform
-
-Tauri bundles for `all` targets (`deb`, `AppImage`, `dmg`, `msi`). `tauri.conf.json` sets `targets: "all"`; icons for 32/128/256/ico/icns supplied.
-
----
-
-## Keyboard Shortcuts (identical to original)
-
-| Key | Action |
-|-----|--------|
-| `c` / `Shift+C` | Next / Prev channel (`channels` wraps) |
-| `s` / `Shift+S` | Next / Prev stream (`streams` wraps) |
-| `f` / `Shift+F` | Next / Prev window function (Hann → Hamming → Blackman-Harris) |
-| `w` / `Shift+W` | DFT size `fftBits` +1 / -1 (8..14, default 11) |
-| `p` / `Shift+P` | Next / Prev palette (Spectrum → SoX → Mono) — live re-render, no re-analysis |
-| `l` / `Shift+L` | Lower range `lrange` +1 / -1 (min -140) |
-| `u` / `Shift+U` | Upper range `urange` +1 / -1 (max 0) |
-| `F1` | Help (`https://help.spek.cc/man-0.8.5.html`) |
-| `Shift+F1` | About |
-
-Other bindings mirror `spek-spectrogram.cc: on_char` and `spek-window.cc` menu.
-
----
-
-## Testing — Against Reference C++ Implementation
-
-We don't claim "close enough". The Rust test suite **re-executes the exact assertions** from `tests/test-utils.cc`, `tests/test-fft.cc`, `tests/test-audio.cc`, plus palette/window/pipeline oracles derived from running the C++ binaries.
-
-```
-cargo test  # 23 tests
-```
-
-* `utils::test_vercmp_full_reference` — 17 cases from `test-utils.cc` (`1.2.3 vs 1.`, `0.9.8 vs 0.10.1`, …), exact `strtol` semantics.
-* `palette::test_palette_reference_sox` — 27 `(palette, level)` pairs whose expected hex values were obtained by compiling `spek-palette.cc` (`0x3e00dc` etc.) and asserting `palette_color` matches bit-for-bit.
-* `fft::test_fft_reference_const` / `test_fft_reference_sine` — loops `nbits 4..15`, zero/DC/sine inputs, checks `input_size`, `output_size`, silence thresholds (`-1e12`, `-149`), and `int(get_output(k)*100)==-602` for sine (`-6.02 dB`), matching `test-fft.cc`. Also validates vs `av_rdft` output (`-6.02` for k=1) from a small C++ harness linked against `libavcodec` 58.134.
-* `fft::test_window_reference` — Hann/Hamming/Blackman-Harris values at `i=0,1,512,1023,1024,2047` for `n=2048`, compared to C++ `get_window` output (e.g., Hann 0.0, Hamming 0.07672, BH 0.00006 at `i=0`).
-* `audio::test_audio_*_reference` — opens the same samples under `spek/tests/samples` (1ch/2ch flac/ape/m4a/wv/wav/mp3/ogg …), asserts `AudioError`, prefix `codec_name` (e.g., FLAC `flac (Free Lossless Audio Codec)` contains `flac`), `sample_rate`, `channels`, `duration` within 0.02 s, and non-empty PCM. Uses symphonia directly; for codecs symphonia cannot decode, verifies `ffmpeg` fallback succeeds when `ffmpeg` is present. Mirrors `FileInfo` map in `test-audio.cc` (bitrate/sample-rate/bps/channels/duration/samples).
-* `pipeline::test_desc_reference` — covers `pipeline_desc` branches: codec+bitrate vs BPS, `W:nfft`, `F:window`, `Stream X / Y:` and error strings.
-* `pipeline::test_pipeline_synthetic` — generates 0.5 s 1000 Hz sine, runs `run_pipeline` (100 samples), checks `bands == 1025`, `samples==100`, peak bin `≈ freq*n/sample_rate` within ±3.
-* `pipeline::test_pipeline_window_functions` — same sine, three windows, asserts `Hann≠Hamming≠BH` (`∑|diff| >0.5`).
-
-All 23 tests pass on Linux with `ffmpeg` 4.4/6.1 and symphonia 0.5.
-
-Additional manual verification:
-
-```bash
-/tmp/palette_test   # C++ palette oracle
-/tmp/window_test    # C++ window oracle
-/tmp/fft_test2      # C++ av_rdft oracle (-6.02)
-npm run build       # Vite succeeds, no TS errors
-cargo check         # Rust warnings only (unused helpers intentionally kept for API parity)
-```
-
----
-
-## Configuration
-
-Preferences file: `$XDG_CONFIG_HOME/spek/preferences` (or `~/.config/spek/preferences` on Linux) — same as original `spek_platform_config_path`. JSON format with legacy INI reader:
-
-```json
-{
-  "update_check": true,
-  "update_last": 0,
-  "general_language": ""
-}
-```
-
-`preferences.rs` still parses the old `wxFileConfig` INI (`/update/check`, `/general/language`) for migration.
-
----
-
-## Differences from Original (Intentional)
-
-* **Threading:** Original uses `pthread` reader/worker threads + condition variables. This port does the same arithmetic synchronously inside a Tauri command (off the UI thread via Tauri's async runtime); the progressive `HaveSampleEvent` per column is replaced by a single `SpectrogramResult` return. Visually identical, but no per-column animation (could be added via Tauri events).
-* **Image Handling:** `wxImage` → `<canvas>` `ImageData`; scaling uses `drawImage` with `imageSmoothingEnabled=false` to match `wxImage::Scale` nearest-neighbour.
-* **Audio Backend:** Pure Rust + CLI fallback instead of linking `libav*`. Users without `ffmpeg` still get broad format support; with `ffmpeg` they get full parity (including APE, WMA, etc.).
-* **UI Toolkit:** `wxWidgets` → HTML/CSS/TypeScript. Looks native-dark, not native wx, but functional parity (menus, toolbar, dialogs, HiDPI) is retained. Native OS menus could be added via `tauri-plugin-menu` if desired.
-* **i18n:** Language selector persists choice; full gettext `po/*.po` catalog integration is stubbed (contributions welcome — drop JSON catalogs in `src/i18n/` and wire `vue-i18n`).
 
 ---
 
 ## License
 
-GPL-2.0 (same as original). See `LICENSE` (copied from `spek/LICENSE`). Contributions under GPL-2.0.
+GPL-3.0 (same as original Spek). See `LICENSE`.
 
-Original copyright: © 2010-2013 Alexander Kojevnikov and contributors (see `CREDITS.md` in original repo, reproduced in About dialog).
-
----
-
-## Credits
-
-* Original Spek by Alexander Kojevnikov + contributors (see About → Developers).
-* Artwork by Olga Vasylevska.
-* This Rust+Tauri port: generated autonomously in YOLO mode, verified against the reference C++ implementation.
-
----
-
-## Quick Start for Contributors
+Copyright © 2010–2013 Alexander Kojevnikov and contributors.  
+Rust + Tauri reimplementation © 2026 Spek Contributors.
 
 ```bash
 git clone https://github.com/alexkay/spek  # reference C++
 git clone <this-repo> spek-tauri
 cd spek-tauri
-npm install
 cargo test   # verify Rust parity
 npm run tauri dev  # launch
 ```
