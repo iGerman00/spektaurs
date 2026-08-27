@@ -151,6 +151,17 @@ fn compute_interval_output(
     }
 }
 
+#[inline]
+pub fn quantize_magnitude_to_u8(v: f32) -> u8 {
+    if !v.is_finite() || v <= -140.0 {
+        0
+    } else {
+        let clamped = v.min(0.0);
+        let normalized = (clamped + 140.0) / 140.0;
+        (normalized * 254.0).floor() as u8 + 1
+    }
+}
+
 pub fn run_pipeline(
     info: AudioFileInfo,
     window_function: WindowFunction,

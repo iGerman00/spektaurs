@@ -77,16 +77,27 @@ impl AudioFileInfo {
 /// Open audio file using symphonia, optionally selecting stream index (0-based among audio streams)
 /// Results are cached per (path, stream) to avoid re-decoding on resize/window changes.
 pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFileInfo {
-    let path = path.as_ref();
-    let cache_key = format!("{}|{}", path.display(), stream_index);
-    // Check cache first (skip for non-existent files to avoid caching negative)
+    let p = path.as_ref();
+    open_audio_file_with_cancel_and_progress(p.to_str().unwrap_or(""), stream_index, || false, |_, _| {})
+}
+
+pub fn open_audio_file_with_cancel_and_progress<C, P>(
+    path: &str,
+    stream_index: usize,
+    is_cancelled: C,
+    mut on_progress: P,
+) -> AudioFileInfo
+where
+    C: Fn() -> bool,
+    P: FnMut(usize, usize),
+{
+    let cache_key = format!("{}|{}", path, stream_index);
     if let Ok(cache) = audio_cache().lock() {
         if let Some(cached) = cache.get(&cache_key) {
-            // Clone and return; need to handle that file may have changed on disk (mtime check omitted for speed)
             return cached.clone();
         }
     }
-    // Check file exists
+    
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(_) => {
@@ -101,20 +112,17 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
                 duration: 0.0,
                 pcm: Vec::new(),
                 frames: 0,
-            }
+            };
         }
     };
 
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+    if let Some(ext) = std::path::Path::new(path).extension().and_then(|s| s.to_str()) {
         hint.with_extension(ext);
     }
 
-    let format_opts: FormatOptions = Default::default();
-    let metadata_opts: MetadataOptions = Default::default();
-
-    let probed = match symphonia::default::get_probe().format(&hint, mss, &format_opts, &metadata_opts) {
+    let probe = match symphonia::default::get_probe().format(&hint, mss, &Default::default(), &Default::default()) {
         Ok(p) => p,
         Err(_) => {
             return AudioFileInfo {
@@ -128,34 +136,21 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
                 duration: 0.0,
                 pcm: Vec::new(),
                 frames: 0,
-            }
+            };
         }
     };
 
-    let mut format = probed.format;
+    let mut format = probe.format;
 
-    // Count audio tracks
-    let audio_tracks: Vec<&Track> = format
-        .tracks()
-        .iter()
-        .filter(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL && t.codec_params.sample_rate.is_some() || matches!(t.codec_params.codec, _ if is_audio_codec(t.codec_params.codec)))
-        .collect();
-
-    // More reliable: check codec params n_frames and sample_rate
-    // Alternative: simply count tracks with codec_type logic? symphonia's Track doesn't expose codec_type directly but codec field indicates.
-    // We fallback to counting all tracks that have audio-related codecs or sample_rate
     let mut all_audio_tracks: Vec<usize> = Vec::new();
     for (idx, track) in format.tracks().iter().enumerate() {
-        // Heuristic: if sample_rate Some and channels Some, it's audio
         if track.codec_params.sample_rate.is_some() {
             all_audio_tracks.push(idx);
         } else if track.codec_params.n_frames.is_some() {
-            // Could be audio
             all_audio_tracks.push(idx);
         }
     }
     if all_audio_tracks.is_empty() {
-        // Try to treat any track as audio if at least one exists
         if format.tracks().is_empty() {
             return AudioFileInfo {
                 error: AudioError::NoStreams,
@@ -170,9 +165,6 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
                 frames: 0,
             };
         } else {
-            // If we can't classify, assume first track is audio if probe succeeded
-            // But we need to check original error: NO_AUDIO when no audio streams
-            // We'll consider no audio if no tracks with sample_rate
             return AudioFileInfo {
                 error: AudioError::NoAudio,
                 codec_name: String::new(),
@@ -190,29 +182,17 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
 
     let streams = all_audio_tracks.len();
 
-    if stream_index >= streams {
-        // Still need to provide info about first stream for error case? Original returns error but still fills codec info for selected stream? We'll follow original: error handling for NO_AUDIO already, but out-of-range stream maybe treated as error?
-        // We'll return error but populate from first available?
-        // For simplicity, return error NoAudio but with streams count
-        // Handling channel errors later
-    }
-
     let track_idx = if stream_index < all_audio_tracks.len() {
         all_audio_tracks[stream_index]
     } else {
-        // Invalid stream: return info with error but no pcm
-        // Populate from first track for metadata?
         all_audio_tracks[0]
     };
 
     let track = &format.tracks()[track_idx];
     let params = &track.codec_params;
 
-    // Codec name
     let codec_name = get_codec_name(params);
-    let bit_rate = params.n_frames.map(|_| 0).unwrap_or(0); // symphonia doesn't give bit_rate directly easily
-    // Actually try to get bit_rate via time_base? We'll estimate from file size/duration if needed
-    // Use params.sample_rate etc
+    let bit_rate = params.n_frames.map(|_| 0).unwrap_or(0);
     let sample_rate = params.sample_rate.unwrap_or(0);
     let bits_per_sample = params.bits_per_sample.unwrap_or(0) as u32;
     let mut channels = params
@@ -220,40 +200,27 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
         .map(|c| c.count())
         .unwrap_or(0);
 
-    // Defer NoChannels error until after decode attempt, as some containers don't expose channels in params but do in decoded spec
     let mut early_no_channels = false;
     if channels == 0 {
-        // Don't return yet; try to decode and deduce channels from actual audio buffers
         early_no_channels = true;
-        // Set provisional channels to 0, will be updated after decode if possible
-        // Keep error as pending
     }
 
-    // Duration: try to get from format or track
-    let duration = if let Some(tb) = track.codec_params.time_base {
+    let duration = if let Some(_tb) = track.codec_params.time_base {
         if let Some(n_frames) = params.n_frames {
             n_frames as f64 / sample_rate as f64
-            // Alternative: tb.calc_time(n_frames).into() but we don't have that
         } else {
-            // Try format duration? symphonia format doesn't expose directly, but we can estimate via packets?
-            // Use default: unknown => error
             0.0
         }
     } else {
         0.0
     };
 
-    // Try to get duration via metadata or fallback
     let duration = if duration > 0.0 {
         duration
     } else {
-        // Try to compute via file size? fallback: decode and count frames, then compute duration after decode
-        // For now return NO_DURATION if zero and not yet decoded
         0.0
     };
 
-    // Attempt to decode to get actual data and duration
-    // Setup decoder
     let decoder_opts = DecoderOptions { ..Default::default() };
     let mut decoder = match symphonia::default::get_codecs().make(&params, &decoder_opts) {
         Ok(d) => d,
@@ -273,12 +240,16 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
         }
     };
 
-    // Decode loop
     let mut pcm_interleaved: Vec<f32> = Vec::new();
     let mut decoded_frames: usize = 0;
     let track_id = track.id;
+    let est_frames = track.codec_params.n_frames.unwrap_or(0) as usize;
+    let mut last_progress_frames: usize = 0;
 
     loop {
+        if is_cancelled() {
+            break;
+        }
         let packet = match format.next_packet() {
             Ok(p) => p,
             Err(SymphoniaError::IoError(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
@@ -426,6 +397,10 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
                         decoded_frames += num_frames;
                     }
                 }
+                if decoded_frames.saturating_sub(last_progress_frames) >= 44100 {
+                    last_progress_frames = decoded_frames;
+                    on_progress(decoded_frames, est_frames);
+                }
             }
             Err(SymphoniaError::DecodeError(_)) => continue,
             Err(_) => break,
@@ -462,7 +437,7 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
 
     if final_pcm.is_empty() || error != AudioError::Ok {
         // Try ffmpeg fallback if available
-        if let Ok(ffmpeg_info) = try_ffmpeg_decode(path, stream_index) {
+        if let Ok(ffmpeg_info) = try_ffmpeg_decode(Path::new(path), stream_index) {
             // Use ffmpeg data if we had failure
             if final_pcm.is_empty() {
                 final_pcm = ffmpeg_info.pcm;
@@ -487,7 +462,7 @@ pub fn open_audio_file<P: AsRef<Path>>(path: P, stream_index: usize) -> AudioFil
     } else if final_codec_name.contains("CodecType(") || final_codec_name.is_empty() || final_codec_name == "Unknown" {
         // Only run ffprobe for metadata enrichment if available (never full decode)
         if let Some(fp) = which_ffprobe() {
-            if let Ok(probe) = get_ffprobe_info(&fp, path) {
+            if let Ok(probe) = get_ffprobe_info(&fp, Path::new(path)) {
                 if !probe.codec_name.is_empty() && probe.codec_name != "Unknown" {
                     final_codec_name = probe.codec_name;
                 }

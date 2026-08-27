@@ -26,7 +26,7 @@ interface SpectrogramResult {
 interface ProgressPayload {
   sample: number;
   bands: number;
-  values: number[];
+  data_u8: number[];
 }
 
 // ----- i18n (minimal, extensible) -----
@@ -39,6 +39,7 @@ const translations: Record<string, Record<string, string>> = {
     "A new version of Spek is available, click to download.": "A new version of Spek is available, click to download.",
     "Drop an audio file here or use File → Open": "Drop an audio file here or use File → Open",
     "Analysing…": "Analysing…",
+    "Decoding…": "Decoding…",
     "Preferences": "Preferences", "General": "General", "Language:": "Language:", "Check for updates": "Check for updates", "OK": "OK", "Close": "Close",
     "About Spek": "About Spek", "Acoustic Spectrum Analyser": "Acoustic Spectrum Analyser", "Spek Website": "Spek Website", "Developers": "Developers", "Artist": "Artist", "Translators": "Translators", "License: GPL-2.0": "License: GPL-2.0",
   },
@@ -50,6 +51,7 @@ const translations: Record<string, Record<string, string>> = {
     "A new version of Spek is available, click to download.": "Eine neue Version von Spek ist verfügbar, klicken zum Herunterladen.",
     "Drop an audio file here or use File → Open": "Audiodatei hier ablegen oder Datei → Öffnen",
     "Analysing…": "Analysiere…",
+    "Decoding…": "Dekodiere…",
     "Preferences": "Einstellungen", "General": "Allgemein", "Language:": "Sprache:", "Check for updates": "Auf Updates prüfen", "OK": "OK", "Close": "Schließen",
     "About Spek": "Über Spek", "Acoustic Spectrum Analyser": "Akustischer Spektrumanalysator", "Spek Website": "Spek-Webseite",
   },
@@ -58,10 +60,14 @@ const translations: Record<string, Record<string, string>> = {
     "Open…": "Ouvrir…", "Save Spectrogram…": "Enregistrer le spectrogramme…", "Exit": "Quitter",
     "Preferences…": "Préférences…", "Help (F1)": "Aide (F1)", "About… (Shift+F1)": "À propos… (Shift+F1)",
     "Open": "Ouvrir", "Save": "Enregistrer",
+    "Analysing…": "Analyse…",
+    "Decoding…": "Décodage…",
   },
   ja: {
     "File": "ファイル", "Edit": "編集", "Help": "ヘルプ",
     "Open…": "開く…", "Save Spectrogram…": "スペクトログラムを保存…", "Exit": "終了",
+    "Analysing…": "解析中…",
+    "Decoding…": "デコード中…",
   },
 };
 
@@ -278,8 +284,6 @@ class Ruler {
   }
 }
 
-let cachedColImageData: ImageData | null = null;
-let cachedColData32: Uint32Array | null = null;
 let cachedPaletteCanvas: HTMLCanvasElement | null = null;
 let cachedPaletteKey = "";
 
@@ -314,6 +318,23 @@ function getPaletteStripCanvas(palette: Palette, fftBits: number): HTMLCanvasEle
 }
 
 let rawQuantized: Uint8Array | null = null;
+let offscreenImageData: ImageData | null = null;
+let offscreenData32: Uint32Array | null = null;
+let offscreenDirty = false;
+const currentRemapLUT = new Uint32Array(256);
+
+function updateRemapLUT() {
+  const lutABGR = getPaletteLutABGR(state.palette);
+  currentRemapLUT[0] = lutABGR[0]; // silence = black
+  const range = state.urange - state.lrange;
+  for (let i = 1; i < 256; i++) {
+    const db = -140.0 + ((i - 1) / 254.0) * 140.0;
+    const clamped = Math.max(state.lrange, Math.min(state.urange, db));
+    const level = range === 0 ? 0 : (clamped - state.lrange) / range;
+    const idx = Math.max(0, Math.min(255, Math.floor(level * 255)));
+    currentRemapLUT[i] = lutABGR[idx];
+  }
+}
 
 function ensureOffscreen(samples: number, bands: number, keepContent = true) {
   if (offscreen && offscreen.width === samples && offscreen.height === bands) return;
@@ -322,104 +343,67 @@ function ensureOffscreen(samples: number, bands: number, keepContent = true) {
   offscreen.width = samples;
   offscreen.height = bands;
   offscreenCtx = offscreen.getContext("2d", { willReadFrequently: true } as any) as CanvasRenderingContext2D | null;
+  offscreenImageData = offscreenCtx ? offscreenCtx.createImageData(samples, bands) : null;
+  offscreenData32 = offscreenImageData ? new Uint32Array(offscreenImageData.data.buffer) : null;
   if (offscreenCtx) {
     if (oldOffscreen && keepContent && oldOffscreen.width > 0 && oldOffscreen.height > 0) {
-      offscreenCtx.imageSmoothingEnabled = true;
-      offscreenCtx.imageSmoothingQuality = "high";
+      offscreenCtx.imageSmoothingEnabled = false;
       offscreenCtx.drawImage(oldOffscreen, 0, 0, samples, bands);
+      if (offscreenImageData) {
+        const d = offscreenCtx.getImageData(0, 0, samples, bands);
+        offscreenImageData.data.set(d.data);
+      }
     } else {
       offscreenCtx.fillStyle = "black";
       offscreenCtx.fillRect(0, 0, samples, bands);
+      if (offscreenData32) {
+        offscreenData32.fill(0xFF000000);
+      }
     }
   }
   if (!rawQuantized || rawQuantized.length !== samples * bands) {
     rawQuantized = new Uint8Array(samples * bands);
   }
-  cachedColImageData = null;
-  cachedColData32 = null;
-}
-
-function updateOffscreenColumn(sample: number, bands: number, values: number[]) {
-  if (!offscreen || !offscreenCtx || offscreen.width !== state.samples || offscreen.height !== bands) {
-    ensureOffscreen(state.samples, bands, true);
-  }
-  if (!offscreenCtx || !offscreen) return;
-  if (!cachedColImageData || cachedColImageData.height !== bands) {
-    cachedColImageData = offscreenCtx.createImageData(1, bands);
-    cachedColData32 = new Uint32Array(cachedColImageData.data.buffer);
-  }
-  if (!rawQuantized || rawQuantized.length !== state.samples * bands) {
-    rawQuantized = new Uint8Array(state.samples * bands);
-  }
-  const d32 = cachedColData32!;
-  const range = state.urange - state.lrange;
-  const lutABGR = getPaletteLutABGR(state.palette);
-  const colBase = sample * bands;
-  for (let y = 0; y < bands; y++) {
-    const v = values[y];
-    // Silence (-inf, null, NaN, undefined, or below lrange) must strictly map to state.lrange (level 0 = black)
-    const isSilence = v === null || v === undefined || typeof v !== "number" || !isFinite(v) || v <= state.lrange;
-    let q = 0;
-    if (!isSilence) {
-      q = Math.max(1, Math.min(255, Math.floor(((Math.min(0, v) + 140.0) / 140.0) * 254.0) + 1));
-    }
-    rawQuantized[colBase + y] = q;
-
-    const clamped = isSilence ? state.lrange : Math.min(state.urange, v);
-    const level = isSilence ? 0 : (range === 0 ? 0 : (clamped - state.lrange) / range);
-    const idx = Math.max(0, Math.min(255, Math.floor(level * 255)));
-    const yy = bands - y - 1;
-    d32[yy] = lutABGR[idx];
-  }
-  offscreenCtx.putImageData(cachedColImageData, sample, 0);
+  updateRemapLUT();
 }
 
 function rebuildOffscreenFromState() {
-  if (state.samples <= 0 || state.bands <= 0 || state.magnitudes.length === 0) {
+  if (state.samples <= 0 || state.bands <= 0) {
     offscreen = null;
     offscreenCtx = null;
     return;
   }
   ensureOffscreen(state.samples, state.bands, false);
-  if (!offscreenCtx || !offscreen) return;
-  const range = state.urange - state.lrange;
+  if (!offscreenCtx || !offscreen || !offscreenData32 || !offscreenImageData) return;
   const bands = state.bands, samples = state.samples;
-  const lutABGR = getPaletteLutABGR(state.palette);
-  
-  // Fast 256-entry remap LUT for instantaneous 165Hz recoloring
-  const remapLUT = new Uint32Array(256);
-  remapLUT[0] = lutABGR[0]; // silence = black
-  for (let i = 1; i < 256; i++) {
-    const db = -140.0 + ((i - 1) / 254.0) * 140.0;
-    const clamped = Math.max(state.lrange, Math.min(state.urange, db));
-    const level = range === 0 ? 0 : (clamped - state.lrange) / range;
-    const idx = Math.max(0, Math.min(255, Math.floor(level * 255)));
-    remapLUT[i] = lutABGR[idx];
-  }
+  updateRemapLUT();
 
   if (!rawQuantized || rawQuantized.length !== samples * bands) {
     rawQuantized = new Uint8Array(samples * bands);
-    for (let i = 0; i < samples * bands; i++) {
-      const v = state.magnitudes[i];
-      if (v === null || v === undefined || typeof v !== "number" || !isFinite(v) || v <= -140.0) {
-        rawQuantized[i] = 0;
-      } else {
-        rawQuantized[i] = Math.max(1, Math.min(255, Math.floor(((Math.min(0, v) + 140.0) / 140.0) * 254.0) + 1));
+    if (state.magnitudes && state.magnitudes.length === samples * bands) {
+      for (let i = 0; i < samples * bands; i++) {
+        const v = state.magnitudes[i];
+        if (v === null || v === undefined || typeof v !== "number" || !isFinite(v) || v <= -140.0) {
+          rawQuantized[i] = 0;
+        } else {
+          rawQuantized[i] = Math.max(1, Math.min(255, Math.floor(((Math.min(0, v) + 140.0) / 140.0) * 254.0) + 1));
+        }
       }
     }
   }
 
-  const imgData = offscreenCtx.createImageData(samples, bands);
-  const d32 = new Uint32Array(imgData.data.buffer);
+  const d32 = offscreenData32;
   const raw = rawQuantized;
+  const remap = currentRemapLUT;
   for (let x = 0; x < samples; x++) {
     const base = x * bands;
     for (let y = 0; y < bands; y++) {
       const yy = bands - y - 1;
-      d32[yy * samples + x] = remapLUT[raw[base + y]];
+      d32[yy * samples + x] = remap[raw[base + y]];
     }
   }
-  offscreenCtx.putImageData(imgData, 0, 0);
+  offscreenCtx.putImageData(offscreenImageData, 0, 0);
+  offscreenDirty = false;
 }
 
 function renderScene(c: CanvasRenderingContext2D, w: number, h: number) {
@@ -449,11 +433,12 @@ function renderScene(c: CanvasRenderingContext2D, w: number, h: number) {
 
   const hasImage = state.samples > 0 && state.bands > 1 && offscreen && w - LPAD - RPAD > 0 && h - TPAD - BPAD > 0;
   if (hasImage) {
-    const imgW = w - LPAD - RPAD, imgH = h - TPAD - BPAD;
-    // Enable high-quality bilinear filtering so 16k DFT (8193 bands) displays all fine harmonic details without aliasing
-    c.imageSmoothingEnabled = true;
+    const imgW = Math.round(w - LPAD - RPAD);
+    const imgH = Math.round(h - TPAD - BPAD);
+    // Use high quality scaling only in frequency axis when bands != imgH
+    c.imageSmoothingEnabled = (imgH !== state.bands);
     c.imageSmoothingQuality = "high";
-    c.drawImage(offscreen!, LPAD, TPAD, imgW, imgH);
+    c.drawImage(offscreen!, Math.round(LPAD), Math.round(TPAD), imgW, imgH);
 
     // File name and description
     c.textBaseline = "top";
@@ -522,6 +507,10 @@ function renderScene(c: CanvasRenderingContext2D, w: number, h: number) {
 
 function render() {
   if (!ctx || !canvas) return;
+  if (offscreenDirty && offscreenCtx && offscreenImageData) {
+    offscreenCtx.putImageData(offscreenImageData, 0, 0);
+    offscreenDirty = false;
+  }
   const dpr = window.devicePixelRatio || 1;
   const rect = container.getBoundingClientRect();
   const width = Math.max(0, Math.floor(rect.width));
@@ -596,17 +585,36 @@ async function analyzeCurrent() {
 
   let rafScheduled = false;
   let unlisten: (() => void) | null = null;
+  let unlistenDecode: (() => void) | null = null;
+
+  try {
+    unlistenDecode = await listen<number>("spectrogram-decode-progress", (ev) => {
+      if (myGen !== generation) return;
+      const p = ev.payload;
+      if (loadingText) {
+        loadingText.textContent = p > 0 ? `${t("Decoding…")} ${p}%` : t("Decoding…");
+      }
+    });
+  } catch {}
+
   if (showPreview) {
     try {
       unlisten = await listen<ProgressPayload>("spectrogram-progress", (ev) => {
         if (myGen !== generation) return;
         const p = ev.payload;
-        if (p.bands !== bands) return;
-        const off = p.sample * bands;
-        for (let i = 0; i < bands && off + i < state.magnitudes.length; i++) {
-          state.magnitudes[off + i] = p.values[i];
+        if (p.bands !== bands || !offscreenData32 || !rawQuantized) return;
+        const colBase = p.sample * bands;
+        const u8 = p.data_u8;
+        const d32 = offscreenData32;
+        const remap = currentRemapLUT;
+        for (let y = 0; y < bands; y++) {
+          const q = u8[y];
+          rawQuantized[colBase + y] = q;
+          const yy = bands - y - 1;
+          d32[yy * samples + p.sample] = remap[q];
         }
-        updateOffscreenColumn(p.sample, bands, p.values);
+        offscreenDirty = true;
+
         if (!rafScheduled || p.sample + 1 === samples) {
           rafScheduled = true;
           requestAnimationFrame(() => {
@@ -635,6 +643,7 @@ async function analyzeCurrent() {
         show_preview: showPreview,
       },
     });
+    if (unlistenDecode) unlistenDecode();
     if (myGen !== generation) {
       if (unlisten) unlisten();
       return;

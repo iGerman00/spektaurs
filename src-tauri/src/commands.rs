@@ -82,7 +82,7 @@ pub struct AnalyzeParams {
 struct ProgressPayload {
     sample: usize,
     bands: usize,
-    values: Vec<f32>,
+    data_u8: Vec<u8>,
 }
 
 static ANALYSIS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -117,8 +117,17 @@ pub async fn analyze_audio(
     let result = tauri::async_runtime::spawn_blocking(move || {
         let is_cancelled = move || ANALYSIS_GENERATION.load(std::sync::atomic::Ordering::Relaxed) != current_gen;
 
-        // Open audio (may be slow for large files)
-        let info = audio::open_audio_file(&path, stream);
+        // Open and decode audio with live progress reporting and cancellation
+        let window_decode = window_clone.clone();
+        let on_decode_progress = move |decoded: usize, est: usize| {
+            let percent = if est > 0 {
+                ((decoded as f32 / est as f32) * 100.0).min(99.0) as u32
+            } else {
+                0
+            };
+            let _ = window_decode.emit("spectrogram-decode-progress", percent);
+        };
+        let info = audio::open_audio_file_with_cancel_and_progress(&path, stream, &is_cancelled, on_decode_progress);
         if is_cancelled() {
             return SpectrogramResult {
                 bands: crate::fft::bits_to_bands(fft_bits),
@@ -146,16 +155,18 @@ pub async fn analyze_audio(
 
         if show_preview {
             let emit = |sample: usize, bands: usize, values: &[f32]| {
+                let mut data_u8 = Vec::with_capacity(bands);
+                for &v in values {
+                    data_u8.push(crate::pipeline::quantize_magnitude_to_u8(v));
+                }
                 let payload = ProgressPayload {
                     sample,
                     bands,
-                    values: values.to_vec(),
+                    data_u8,
                 };
                 let _ = window_clone.emit("spectrogram-progress", &payload);
             };
             let mut res = crate::pipeline::run_pipeline_with_emit_cancel(info, wf, fft_bits, samples, channel, stream, emit, is_cancelled);
-            // All magnitudes were already streamed column-by-column to frontend.
-            // Clear magnitudes to avoid 150MB JSON serialization overhead that caused 2-3s delay at 100%!
             res.magnitudes = vec![];
             res
         } else {
