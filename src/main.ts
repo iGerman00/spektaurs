@@ -601,6 +601,8 @@ async function analyzeCurrent() {
   let rafScheduled = false;
   let unlisten: (() => void) | null = null;
   let unlistenDecode: (() => void) | null = null;
+  let renderedSample = 0;
+  let receivedSample = 0;
 
   try {
     unlistenDecode = await listen<number>("spectrogram-decode-progress", (ev) => {
@@ -618,28 +620,24 @@ async function analyzeCurrent() {
         if (myGen !== generation) return;
         const p = ev.payload;
         if (p.bands !== bands || !offscreenData32 || !rawQuantized) return;
-        // Zero-copy batch set into full-res rawQuantized buffer
+        // Zero-cost typed array copy: takes ~0.002ms, returns immediately so CSS animations stay at 165Hz
         rawQuantized.set(p.data_u8, p.start_sample * bands);
+        receivedSample = Math.max(receivedSample, p.start_sample + p.count);
 
-        // Downsample only the columns in this batch
-        for (let c = 0; c < p.count; c++) {
-          const s = p.start_sample + c;
-          if (s < samples) {
-            downsampleColumnToDisplay(rawQuantized, s * bands, bands, displayHeight, offscreenData32, s, samples, currentRemapLUT);
-          }
-        }
-        offscreenDirty = true;
-
-        const lastSample = p.start_sample + p.count;
-        if (!rafScheduled || lastSample >= samples) {
+        if (!rafScheduled || receivedSample >= samples) {
           rafScheduled = true;
           requestAnimationFrame(() => {
             rafScheduled = false;
-            if (myGen === generation) {
-              render();
-              if (loadingText) {
-                loadingText.textContent = `${t("Analysing…")} ${Math.min(100, Math.round((lastSample / samples) * 100))}%`;
-              }
+            if (myGen !== generation || !offscreenData32 || !rawQuantized) return;
+            const target = Math.min(samples, receivedSample);
+            while (renderedSample < target) {
+              downsampleColumnToDisplay(rawQuantized, renderedSample * bands, bands, displayHeight, offscreenData32, renderedSample, samples, currentRemapLUT);
+              renderedSample++;
+            }
+            offscreenDirty = true;
+            render();
+            if (loadingText) {
+              loadingText.textContent = `${t("Analysing…")} ${Math.min(100, Math.round((target / samples) * 100))}%`;
             }
           });
         }
@@ -741,7 +739,7 @@ async function saveSpectrogram() {
     const res = prefs.save_resolution || "window";
     if (res === "original" && state.samples > 0 && state.bands > 0) {
       saveW = state.samples + LPAD + RPAD;
-      saveH = Math.max(480, Math.min(2160, state.bands + TPAD + BPAD));
+      saveH = state.bands + TPAD + BPAD;
     } else if (res.includes("x")) {
       const [wStr, hStr] = res.split("x");
       saveW = parseInt(wStr) || saveW;
@@ -804,7 +802,15 @@ async function openPreferences() {
   const defaults:any = await invoke("get_default_settings");
   checkUpdate.checked=checkVal;
   if (showPreview) (showPreview as any).checked = defaults.show_preview !== false;
-  if (showShortcuts) (showShortcuts as any).checked = defaults.show_shortcuts !== false;
+  if (showShortcuts) {
+    (showShortcuts as any).checked = defaults.show_shortcuts !== false;
+    showShortcuts.onchange = () => {
+      if (hintEl) {
+        hintEl.classList.toggle("hidden", !showShortcuts.checked);
+        render();
+      }
+    };
+  }
   prefWindow.value = defaults.window_function; prefDft.value = String(defaults.fft_bits);
   prefPalette.value = defaults.palette; prefLow.value = String(defaults.lrange); prefHigh.value = String(defaults.urange);
   prefSaveRes.value = defaults.save_resolution;
@@ -824,7 +830,10 @@ async function openPreferences() {
       show_shortcuts: shortcutsOn,
       save_resolution: prefSaveRes.value
     }});
-    if (hintEl) hintEl.classList.toggle("hidden", !shortcutsOn);
+    if (hintEl) {
+      hintEl.classList.toggle("hidden", !shortcutsOn);
+      render();
+    }
     currentLang=sel||"en"; applyI18n();
     // Apply defaults to current state if no file open (so next file uses them)
     if(!state.path){
@@ -920,6 +929,7 @@ window.addEventListener("DOMContentLoaded", async ()=>{
     if (typeof def.urange === 'number') state.urange = def.urange;
     if (def.show_shortcuts !== undefined && hintEl) {
       hintEl.classList.toggle("hidden", def.show_shortcuts === false);
+      render();
     }
   }catch{}
   // Ensure top-bar tooltip element exists (for stream text hover only)
@@ -967,6 +977,32 @@ window.addEventListener("DOMContentLoaded", async ()=>{
   document.getElementById("info-close")?.addEventListener("click", (e)=>{ e.stopPropagation(); infoBar.classList.add("hidden"); });
   window.addEventListener("keydown", handleKey);
   canvas.tabIndex=0; canvas.focus(); container.addEventListener("click", ()=> canvas.focus());
+
+  // Mouse wheel bindings:
+  // Wheel UP: increase visibility (raise lrange threshold, brightening signal)
+  // Wheel DOWN: decrease visibility (lower lrange threshold, dimming noise floor)
+  // Shift + Wheel: adjust high limit (urange)
+  // Ctrl + Wheel: step FFT size (w / W)
+  container.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const dir = e.deltaY < 0 ? 1 : -1;
+    const step = e.altKey ? 5 : (Math.abs(e.deltaY) > 50 ? 2 : 1);
+
+    if (e.ctrlKey) {
+      if (dir > 0) {
+        state.fftBits = Math.min(MAX_FFT_BITS, state.fftBits + 1);
+      } else {
+        state.fftBits = Math.max(MIN_FFT_BITS, state.fftBits - 1);
+      }
+      debouncedAnalyze(100);
+    } else if (e.shiftKey) {
+      state.urange = Math.max(state.lrange + 1, Math.min(MAX_RANGE, state.urange + dir * step));
+      scheduleRecolor();
+    } else {
+      state.lrange = Math.max(MIN_RANGE, Math.min(state.urange - 1, state.lrange + dir * step));
+      scheduleRecolor();
+    }
+  }, { passive: false });
 
   // Resize: debounce 200ms and recompute if samples changed by >8 or >3%, or re-downsample if height changed
   let resizeTimer: number | undefined;
