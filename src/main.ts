@@ -889,6 +889,20 @@ function debouncedAnalyze(delay = 50) {
   }, delay);
 }
 
+// Reset dynamic range to default (-120 dB to 0 dB or user preferences defaults)
+async function resetDynamicRange() {
+  try {
+    const def: any = await invoke("get_default_settings");
+    state.lrange = typeof def.lrange === 'number' ? def.lrange : LRANGE_DEFAULT;
+    state.urange = typeof def.urange === 'number' ? def.urange : URANGE_DEFAULT;
+  } catch {
+    state.lrange = LRANGE_DEFAULT;
+    state.urange = URANGE_DEFAULT;
+  }
+  scheduleRecolor();
+  showToast(`Range reset: ${state.lrange} dB to ${state.urange} dB`);
+}
+
 function handleKey(e: KeyboardEvent) {
   let handled = true;
   switch (e.key) {
@@ -906,6 +920,7 @@ function handleKey(e: KeyboardEvent) {
     case "U": state.urange = Math.max(state.urange - 1, state.lrange + 1); scheduleRecolor(); break;
     case "w": state.fftBits = Math.min(state.fftBits + 1, MAX_FFT_BITS); debouncedAnalyze(); break;
     case "W": state.fftBits = Math.max(state.fftBits - 1, MIN_FFT_BITS); debouncedAnalyze(); break;
+    case "r": case "R": resetDynamicRange(); break;
     default: handled = false;
   }
   if (handled) {
@@ -978,10 +993,25 @@ window.addEventListener("DOMContentLoaded", async ()=>{
   window.addEventListener("keydown", handleKey);
   canvas.tabIndex=0; canvas.focus(); container.addEventListener("click", ()=> canvas.focus());
 
+  // Middle-click (or auxclick) resets dynamic range to default (-120 dB to 0 dB)
+  container.addEventListener("auxclick", (e) => {
+    if (e.button === 1) {
+      e.preventDefault();
+      resetDynamicRange();
+    }
+  });
+  container.addEventListener("mousedown", (e) => {
+    if (e.button === 1) {
+      e.preventDefault();
+      resetDynamicRange();
+    }
+  });
+
   // Mouse wheel bindings:
   // Wheel UP: increase visibility (raise lrange threshold, brightening signal)
   // Wheel DOWN: decrease visibility (lower lrange threshold, dimming noise floor)
-  // Shift + Wheel: adjust high limit (urange)
+  // Shift + Wheel UP: raise high limit (urange towards 0 dB)
+  // Shift + Wheel DOWN: lower high limit (urange towards lrange)
   // Ctrl + Wheel: step FFT size (w / W)
   container.addEventListener("wheel", (e) => {
     e.preventDefault();
