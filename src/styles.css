@@ -199,44 +199,110 @@ canvas#spectrogram {
 
 /* Dialogs */
 dialog.dialog {
-  background: #2d2d2d;
+  background: #252525;
   color: var(--fg);
-  border: 1px solid #444;
+  border: 1px solid #383838;
   border-radius: 12px;
   padding: 0;
-  min-width: 420px;
+  min-width: 440px;
   max-width: 560px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
 }
-dialog.dialog::backdrop { background: rgba(0,0,0,0.5); }
+dialog.dialog::backdrop { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(2px); }
 dialog.dialog h2 {
   margin: 0;
   padding: 16px 20px;
   font-size: 16px;
+  font-weight: 600;
   border-bottom: 1px solid #333;
 }
-.dialog-content { padding: 16px 20px; }
-.section-title { font-weight: 600; margin-bottom: 10px; font-size: 13px; color: #bbb; }
+.dialog-content { padding: 18px 20px; }
+.section { margin-bottom: 16px; }
+.section:last-child { margin-bottom: 0; }
+.section-title {
+  font-weight: 600;
+  margin-bottom: 12px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #888;
+}
 .field {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
 }
-.field label { min-width: 80px; }
+.field label {
+  min-width: 100px;
+  font-size: 13px;
+  color: #ddd;
+}
 .field select, .field input, .field input[type="text"], .field input[type="number"] {
   flex: 1;
-  background: #2d2d2d;
-  border: 1px solid #444;
-  color: var(--fg);
-  padding: 6px 8px;
+  background: #181818;
+  border: 1px solid #3a3a3a;
+  color: #eee;
+  padding: 7px 10px;
   border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.field select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="%23aaaaaa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>');
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+  cursor: pointer;
+}
+.field select:focus, .field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.25);
 }
 .field select option {
-  background: #2d2d2d;
-  color: #e0e0e0;
+  background: #252525;
+  color: #eee;
+  padding: 6px;
 }
-.checkbox { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.field-range {
+  display: flex;
+  gap: 16px;
+}
+.range-col {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.range-col label {
+  min-width: auto;
+  font-size: 13px;
+  color: #ddd;
+}
+.range-col input[type="number"] {
+  width: 70px;
+  flex: none;
+  text-align: right;
+}
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #eee;
+  user-select: none;
+}
+.checkbox input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

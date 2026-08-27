@@ -27,6 +27,8 @@ struct PrefsFile {
     #[serde(default)]
     show_preview: Option<bool>,
     #[serde(default)]
+    show_shortcuts: Option<bool>,
+    #[serde(default)]
     save_resolution: Option<String>,
     #[serde(flatten)]
     extra: HashMap<String, serde_json::Value>,
@@ -44,6 +46,7 @@ impl Default for PrefsFile {
             lrange: Some(-120),
             urange: Some(0),
             show_preview: Some(true),
+            show_shortcuts: Some(true),
             save_resolution: Some("window".to_string()),
             extra: HashMap::new(),
         }
@@ -200,6 +203,8 @@ impl Preferences {
     pub fn set_urange(&self, v: i32) { { let mut c = self.cache.lock().unwrap(); c.urange = Some(v); } self.save(); }
     pub fn get_show_preview(&self) -> bool { self.cache.lock().unwrap().show_preview.unwrap_or(true) }
     pub fn set_show_preview(&self, v: bool) { { let mut c = self.cache.lock().unwrap(); c.show_preview = Some(v); } self.save(); }
+    pub fn get_show_shortcuts(&self) -> bool { self.cache.lock().unwrap().show_shortcuts.unwrap_or(true) }
+    pub fn set_show_shortcuts(&self, v: bool) { { let mut c = self.cache.lock().unwrap(); c.show_shortcuts = Some(v); } self.save(); }
     pub fn get_save_resolution(&self) -> String { self.cache.lock().unwrap().save_resolution.clone().unwrap_or_else(|| "window".to_string()) }
     pub fn set_save_resolution(&self, v: String) { { let mut c = self.cache.lock().unwrap(); c.save_resolution = Some(v); } self.save(); }
 

@@ -189,10 +189,6 @@ function bitsToBands(bits: number): number {
   return (1 << (bits - 1)) + 1;
 }
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, v));
-}
-
 function timeFormatter(unit: number): string {
   const m = Math.floor(unit / 60);
   const s = unit % 60;
@@ -282,37 +278,84 @@ class Ruler {
   }
 }
 
-function ensureOffscreen(samples: number, bands: number) {
+let cachedColImageData: ImageData | null = null;
+let cachedColData32: Uint32Array | null = null;
+let cachedPaletteCanvas: HTMLCanvasElement | null = null;
+let cachedPaletteKey = "";
+
+function getPaletteStripCanvas(palette: Palette, fftBits: number): HTMLCanvasElement {
+  const bands = bitsToBands(fftBits);
+  const key = `${palette}_${fftBits}`;
+  if (cachedPaletteCanvas && cachedPaletteKey === key && cachedPaletteCanvas.height === bands) {
+    return cachedPaletteCanvas;
+  }
+  const pOff = document.createElement("canvas");
+  pOff.width = RULER;
+  pOff.height = bands;
+  const poctx = pOff.getContext("2d");
+  if (poctx) {
+    const d = poctx.createImageData(RULER, bands);
+    const d32 = new Uint32Array(d.data.buffer);
+    const lutABGR = getPaletteLutABGR(palette);
+    for (let y = 0; y < bands; y++) {
+      const level = y / bands;
+      const idx = Math.max(0, Math.min(255, Math.floor(level * 255)));
+      const colABGR = lutABGR[idx];
+      const yy = bands - y - 1;
+      for (let x = 0; x < RULER; x++) {
+        d32[yy * RULER + x] = colABGR;
+      }
+    }
+    poctx.putImageData(d, 0, 0);
+  }
+  cachedPaletteCanvas = pOff;
+  cachedPaletteKey = key;
+  return pOff;
+}
+
+function ensureOffscreen(samples: number, bands: number, keepContent = true) {
   if (offscreen && offscreen.width === samples && offscreen.height === bands) return;
+  const oldOffscreen = offscreen;
   offscreen = document.createElement("canvas");
   offscreen.width = samples;
   offscreen.height = bands;
   offscreenCtx = offscreen.getContext("2d", { willReadFrequently: true } as any) as CanvasRenderingContext2D | null;
   if (offscreenCtx) {
-    offscreenCtx.fillStyle = "black";
-    offscreenCtx.fillRect(0, 0, samples, bands);
+    if (oldOffscreen && keepContent && oldOffscreen.width > 0 && oldOffscreen.height > 0) {
+      offscreenCtx.imageSmoothingEnabled = false;
+      offscreenCtx.drawImage(oldOffscreen, 0, 0, samples, bands);
+    } else {
+      offscreenCtx.fillStyle = "black";
+      offscreenCtx.fillRect(0, 0, samples, bands);
+    }
   }
+  cachedColImageData = null;
+  cachedColData32 = null;
 }
 
 function updateOffscreenColumn(sample: number, bands: number, values: number[]) {
   if (!offscreen || !offscreenCtx || offscreen.width !== state.samples || offscreen.height !== bands) {
-    ensureOffscreen(state.samples, bands);
+    ensureOffscreen(state.samples, bands, true);
   }
   if (!offscreenCtx || !offscreen) return;
+  if (!cachedColImageData || cachedColImageData.height !== bands) {
+    cachedColImageData = offscreenCtx.createImageData(1, bands);
+    cachedColData32 = new Uint32Array(cachedColImageData.data.buffer);
+  }
+  const d32 = cachedColData32!;
   const range = state.urange - state.lrange;
-  const colData = offscreenCtx.createImageData(1, bands);
-  const d32 = new Uint32Array(colData.data.buffer);
   const lutABGR = getPaletteLutABGR(state.palette);
   for (let y = 0; y < bands; y++) {
     const v = values[y];
-    const isNan = !isFinite(v);
-    const clamped = isNan ? state.lrange : clamp(v, state.lrange, state.urange);
-    const level = isNan ? 0 : (range === 0 ? 0 : (clamped - state.lrange) / range);
+    // Silence (-inf, null, NaN, undefined, or below lrange) must strictly map to state.lrange (level 0 = black)
+    const isSilence = v === null || v === undefined || typeof v !== "number" || !isFinite(v) || v <= state.lrange;
+    const clamped = isSilence ? state.lrange : Math.min(state.urange, v);
+    const level = isSilence ? 0 : (range === 0 ? 0 : (clamped - state.lrange) / range);
     const idx = Math.max(0, Math.min(255, Math.floor(level * 255)));
     const yy = bands - y - 1;
     d32[yy] = lutABGR[idx];
   }
-  offscreenCtx.putImageData(colData, sample, 0);
+  offscreenCtx.putImageData(cachedColImageData, sample, 0);
 }
 
 function rebuildOffscreenFromState() {
@@ -321,7 +364,7 @@ function rebuildOffscreenFromState() {
     offscreenCtx = null;
     return;
   }
-  ensureOffscreen(state.samples, state.bands);
+  ensureOffscreen(state.samples, state.bands, false);
   if (!offscreenCtx || !offscreen) return;
   const range = state.urange - state.lrange;
   const bands = state.bands, samples = state.samples;
@@ -332,9 +375,9 @@ function rebuildOffscreenFromState() {
     const base = x * bands;
     for (let y = 0; y < bands; y++) {
       const v = state.magnitudes[base + y];
-      const isNan = !isFinite(v);
-      const clamped = isNan ? state.lrange : clamp(v, state.lrange, state.urange);
-      const level = isNan ? 0 : (range === 0 ? 0 : (clamped - state.lrange) / range);
+      const isSilence = v === null || v === undefined || typeof v !== "number" || !isFinite(v) || v <= state.lrange;
+      const clamped = isSilence ? state.lrange : Math.min(state.urange, v);
+      const level = isSilence ? 0 : (range === 0 ? 0 : (clamped - state.lrange) / range);
       const idx = Math.max(0, Math.min(255, Math.floor(level * 255)));
       const yy = bands - y - 1;
       d32[yy * samples + x] = lutABGR[idx];
@@ -408,27 +451,8 @@ function renderScene(c: CanvasRenderingContext2D, w: number, h: number) {
 
   // Palette strip & spectral density ruler
   if (h - TPAD - BPAD > 0) {
-    const paletteBands = bitsToBands(state.fftBits);
-    const pOff = document.createElement("canvas");
-    pOff.width = RULER;
-    pOff.height = paletteBands;
-    const poctx = pOff.getContext("2d");
-    if (poctx) {
-      const d = poctx.createImageData(RULER, paletteBands);
-      const d32 = new Uint32Array(d.data.buffer);
-      const lutABGR = getPaletteLutABGR(state.palette);
-      for (let y = 0; y < paletteBands; y++) {
-        const level = y / paletteBands;
-        const idx = Math.max(0, Math.min(255, Math.floor(level * 255)));
-        const colABGR = lutABGR[idx];
-        const yy = paletteBands - y - 1;
-        for (let x = 0; x < RULER; x++) {
-          d32[yy * RULER + x] = colABGR;
-        }
-      }
-      poctx.putImageData(d, 0, 0);
-      c.drawImage(pOff, w - RPAD + GAP, TPAD, RULER, h - TPAD - BPAD + 1);
-    }
+    const pOff = getPaletteStripCanvas(state.palette, state.fftBits);
+    c.drawImage(pOff, w - RPAD + GAP, TPAD, RULER, h - TPAD - BPAD + 1);
     c.textBaseline = "middle";
     c.font = smallFont;
     c.fillStyle = "white";
@@ -518,11 +542,8 @@ async function analyzeCurrent() {
   state.samples = samples;
   state.magnitudes = new Array(samples * bands).fill(NaN);
   state.error = "";
-  ensureOffscreen(samples, bands);
-  if (offscreenCtx && offscreen) {
-    offscreenCtx.fillStyle = "black";
-    offscreenCtx.fillRect(0, 0, samples, bands);
-  }
+  // Keep previous frame until new columns arrive - do not clear to black immediately!
+  ensureOffscreen(samples, bands, true);
   render();
 
   loadingEl.classList.remove("hidden");
@@ -535,7 +556,7 @@ async function analyzeCurrent() {
     showPreview = pref.show_preview !== false;
   } catch {}
 
-  let lastRender = performance.now();
+  let rafScheduled = false;
   let unlisten: (() => void) | null = null;
   if (showPreview) {
     try {
@@ -548,15 +569,17 @@ async function analyzeCurrent() {
           state.magnitudes[off + i] = p.values[i];
         }
         updateOffscreenColumn(p.sample, bands, p.values);
-        const now = performance.now();
-        if (now - lastRender > 16 || p.sample + 1 === samples) {
-          lastRender = now;
+        if (!rafScheduled || p.sample + 1 === samples) {
+          rafScheduled = true;
           requestAnimationFrame(() => {
-            if (myGen === generation) render();
+            rafScheduled = false;
+            if (myGen === generation) {
+              render();
+              if (loadingText) {
+                loadingText.textContent = `${t("Analysing…")} ${Math.round(((p.sample + 1) / samples) * 100)}%`;
+              }
+            }
           });
-          if (loadingText) {
-            loadingText.textContent = `${t("Analysing…")} ${Math.round(((p.sample + 1) / samples) * 100)}%`;
-          }
         }
       });
     } catch {}
@@ -583,12 +606,14 @@ async function analyzeCurrent() {
     state.sampleRate = result.sample_rate;
     state.duration = result.duration;
     state.desc = result.desc;
-    state.magnitudes = result.magnitudes.slice();
+    if (result.magnitudes && result.magnitudes.length > 0) {
+      state.magnitudes = result.magnitudes.slice();
+    }
     state.streams = result.streams;
     state.channels = result.channels;
     state.error = result.error;
     document.title = state.path ? `Spek - ${state.path.split(/[\/\\]/).pop()}` : "Spek - Acoustic Spectrum Analyser";
-    cachedResult = result;
+    cachedResult = { ...result, magnitudes: state.magnitudes };
     cachedKey = key;
     lastSamples = samples;
 
@@ -692,16 +717,21 @@ async function openPreferences() {
   const langSelect=document.getElementById("language-select") as HTMLSelectElement;
   const checkUpdate=document.getElementById("check-update") as HTMLInputElement;
   const showPreview=document.getElementById("show-preview") as HTMLInputElement;
+  const showShortcuts=document.getElementById("show-shortcuts") as HTMLInputElement;
   const prefWindow=document.getElementById("pref-window") as HTMLSelectElement;
   const prefDft=document.getElementById("pref-dft") as HTMLSelectElement;
   const prefPalette=document.getElementById("pref-palette") as HTMLSelectElement;
   const prefLow=document.getElementById("pref-low") as HTMLInputElement;
   const prefHigh=document.getElementById("pref-high") as HTMLInputElement;
   const prefSaveRes=document.getElementById("pref-save-res") as HTMLSelectElement;
+  const hintEl=document.getElementById("hint") as HTMLElement;
+
   langSelect.innerHTML=""; const langs:[string,string][]=await invoke("get_available_languages");
   const curLang:string=await invoke("get_language"); const checkVal:boolean=await invoke("get_check_update");
   const defaults:any = await invoke("get_default_settings");
-  checkUpdate.checked=checkVal; (showPreview as any).checked = defaults.show_preview;
+  checkUpdate.checked=checkVal;
+  if (showPreview) (showPreview as any).checked = defaults.show_preview !== false;
+  if (showShortcuts) (showShortcuts as any).checked = defaults.show_shortcuts !== false;
   prefWindow.value = defaults.window_function; prefDft.value = String(defaults.fft_bits);
   prefPalette.value = defaults.palette; prefLow.value = String(defaults.lrange); prefHigh.value = String(defaults.urange);
   prefSaveRes.value = defaults.save_resolution;
@@ -713,11 +743,15 @@ async function openPreferences() {
     const sel=langSelect.value;
     await invoke("set_language",{value:sel});
     await invoke("set_check_update",{value:checkUpdate.checked});
+    const shortcutsOn = showShortcuts ? (showShortcuts as any).checked : true;
     await invoke("set_default_settings",{settings:{
       window_function: prefWindow.value, fft_bits: parseInt(prefDft.value), palette: prefPalette.value,
       lrange: parseInt(prefLow.value), urange: parseInt(prefHigh.value),
-      show_preview: (showPreview as any).checked, save_resolution: prefSaveRes.value
+      show_preview: showPreview ? (showPreview as any).checked : true,
+      show_shortcuts: shortcutsOn,
+      save_resolution: prefSaveRes.value
     }});
+    if (hintEl) hintEl.classList.toggle("hidden", !shortcutsOn);
     currentLang=sel||"en"; applyI18n();
     // Apply defaults to current state if no file open (so next file uses them)
     if(!state.path){
@@ -778,7 +812,8 @@ window.addEventListener("DOMContentLoaded", async ()=>{
   canvas=document.getElementById("spectrogram") as HTMLCanvasElement;
   ctx=canvas.getContext("2d"); container=document.getElementById("canvas-container") as HTMLElement;
   loadingEl=document.getElementById("loading") as HTMLElement; infoBar=document.getElementById("info-bar") as HTMLElement; toastEl=document.getElementById("toast") as HTMLElement;
-  // init lang + defaults (window/dft/palette/low/high)
+  const hintEl=document.getElementById("hint") as HTMLElement;
+  // init lang + defaults (window/dft/palette/low/high/shortcuts)
   try{ currentLang=await invoke("get_language") || "en"; if(!translations[currentLang]) currentLang="en"; }catch{}
   try{
     const def:any = await invoke("get_default_settings");
@@ -787,6 +822,9 @@ window.addEventListener("DOMContentLoaded", async ()=>{
     if (def.palette) state.palette = def.palette;
     if (typeof def.lrange === 'number') state.lrange = def.lrange;
     if (typeof def.urange === 'number') state.urange = def.urange;
+    if (def.show_shortcuts !== undefined && hintEl) {
+      hintEl.classList.toggle("hidden", def.show_shortcuts === false);
+    }
   }catch{}
   // Ensure top-bar tooltip element exists (for stream text hover only)
   if (!document.getElementById("top-bar-tooltip")) {

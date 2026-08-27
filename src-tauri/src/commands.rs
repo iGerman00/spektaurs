@@ -43,6 +43,7 @@ pub fn get_default_settings() -> serde_json::Value {
         "lrange": p.get_lrange(),
         "urange": p.get_urange(),
         "show_preview": p.get_show_preview(),
+        "show_shortcuts": p.get_show_shortcuts(),
         "save_resolution": p.get_save_resolution(),
     })
 }
@@ -56,6 +57,7 @@ pub fn set_default_settings(settings: serde_json::Value) -> bool {
     if let Some(v) = settings.get("lrange").and_then(|v| v.as_i64()) { p.set_lrange(v as i32); }
     if let Some(v) = settings.get("urange").and_then(|v| v.as_i64()) { p.set_urange(v as i32); }
     if let Some(v) = settings.get("show_preview").and_then(|v| v.as_bool()) { p.set_show_preview(v); }
+    if let Some(v) = settings.get("show_shortcuts").and_then(|v| v.as_bool()) { p.set_show_shortcuts(v); }
     if let Some(v) = settings.get("save_resolution").and_then(|v| v.as_str()) { p.set_save_resolution(v.to_string()); }
     true
 }
@@ -128,7 +130,11 @@ pub async fn analyze_audio(
                 };
                 let _ = window_clone.emit("spectrogram-progress", &payload);
             };
-            crate::pipeline::run_pipeline_with_emit(info, wf, fft_bits, samples, channel, stream, emit)
+            let mut res = crate::pipeline::run_pipeline_with_emit(info, wf, fft_bits, samples, channel, stream, emit);
+            // All magnitudes were already streamed column-by-column to frontend.
+            // Clear magnitudes to avoid 150MB JSON serialization overhead that caused 2-3s delay at 100%!
+            res.magnitudes = vec![];
+            res
         } else {
             crate::pipeline::run_pipeline(info, wf, fft_bits, samples, channel, stream)
         }
