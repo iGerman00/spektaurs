@@ -120,6 +120,7 @@ let state = {
   magnitudes: [] as number[],
   bands: 0,
   samples: 0,
+  displayHeight: 0,
   error: "" as string,
 };
 
@@ -336,50 +337,70 @@ function updateRemapLUT() {
   }
 }
 
-function ensureOffscreen(samples: number, bands: number, keepContent = true) {
-  if (offscreen && offscreen.width === samples && offscreen.height === bands) return;
+function downsampleColumnToDisplay(raw: Uint8Array, colBase: number, bands: number, displayHeight: number, d32: Uint32Array, x: number, samples: number, remap: Uint32Array) {
+  // Area-maximum downsampling: map each display row to a range of source bands
+  // Using MAX instead of average preserves thin harmonic lines that span only 1-2 bins
+  for (let dy = 0; dy < displayHeight; dy++) {
+    // Display row dy maps to frequency range. Y=0 is top (highest freq), Y=displayHeight-1 is bottom (lowest freq)
+    // In raw data, index 0 = lowest freq, index bands-1 = highest freq
+    // Display is flipped: display row 0 = band (bands-1), display row (displayHeight-1) = band 0
+    const srcTop = (1.0 - dy / displayHeight) * bands;
+    const srcBot = (1.0 - (dy + 1) / displayHeight) * bands;
+    const yStart = Math.max(0, Math.floor(srcBot));
+    const yEnd = Math.min(bands, Math.ceil(srcTop));
+    if (yEnd <= yStart) {
+      d32[dy * samples + x] = remap[0];
+      continue;
+    }
+    // Take the maximum raw quantized value across the source band range
+    let maxVal = 0;
+    for (let y = yStart; y < yEnd; y++) {
+      const v = raw[colBase + y];
+      if (v > maxVal) maxVal = v;
+    }
+    d32[dy * samples + x] = remap[maxVal];
+  }
+}
+
+function ensureOffscreen(samples: number, displayHeight: number, keepContent = true) {
+  if (offscreen && offscreen.width === samples && offscreen.height === displayHeight) return;
   const oldOffscreen = offscreen;
   offscreen = document.createElement("canvas");
   offscreen.width = samples;
-  offscreen.height = bands;
-  offscreenCtx = offscreen.getContext("2d", { willReadFrequently: true } as any) as CanvasRenderingContext2D | null;
-  offscreenImageData = offscreenCtx ? offscreenCtx.createImageData(samples, bands) : null;
+  offscreen.height = displayHeight;
+  offscreenCtx = offscreen.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D | null;
+  offscreenImageData = offscreenCtx ? offscreenCtx.createImageData(samples, displayHeight) : null;
   offscreenData32 = offscreenImageData ? new Uint32Array(offscreenImageData.data.buffer) : null;
   if (offscreenCtx) {
     if (oldOffscreen && keepContent && oldOffscreen.width > 0 && oldOffscreen.height > 0) {
       offscreenCtx.imageSmoothingEnabled = false;
-      offscreenCtx.drawImage(oldOffscreen, 0, 0, samples, bands);
+      offscreenCtx.drawImage(oldOffscreen, 0, 0, samples, displayHeight);
       if (offscreenImageData) {
-        const d = offscreenCtx.getImageData(0, 0, samples, bands);
+        const d = offscreenCtx.getImageData(0, 0, samples, displayHeight);
         offscreenImageData.data.set(d.data);
       }
     } else {
-      offscreenCtx.fillStyle = "black";
-      offscreenCtx.fillRect(0, 0, samples, bands);
-      if (offscreenData32) {
-        offscreenData32.fill(0xFF000000);
-      }
+      if (offscreenData32) offscreenData32.fill(0xFF000000);
     }
-  }
-  if (!rawQuantized || rawQuantized.length !== samples * bands) {
-    rawQuantized = new Uint8Array(samples * bands);
   }
   updateRemapLUT();
 }
 
 function rebuildOffscreenFromState() {
-  if (state.samples <= 0 || state.bands <= 0) {
+  const displayHeight = state.displayHeight;
+  if (state.samples <= 0 || state.bands <= 0 || displayHeight <= 0) {
     offscreen = null;
     offscreenCtx = null;
     return;
   }
-  ensureOffscreen(state.samples, state.bands, false);
+  ensureOffscreen(state.samples, displayHeight, false);
   if (!offscreenCtx || !offscreen || !offscreenData32 || !offscreenImageData) return;
   const bands = state.bands, samples = state.samples;
   updateRemapLUT();
 
   if (!rawQuantized || rawQuantized.length !== samples * bands) {
     rawQuantized = new Uint8Array(samples * bands);
+    // rawQuantized is populated during streaming; if magnitudes exist, quantize them
     if (state.magnitudes && state.magnitudes.length === samples * bands) {
       for (let i = 0; i < samples * bands; i++) {
         const v = state.magnitudes[i];
@@ -396,11 +417,7 @@ function rebuildOffscreenFromState() {
   const raw = rawQuantized;
   const remap = currentRemapLUT;
   for (let x = 0; x < samples; x++) {
-    const base = x * bands;
-    for (let y = 0; y < bands; y++) {
-      const yy = bands - y - 1;
-      d32[yy * samples + x] = remap[raw[base + y]];
-    }
+    downsampleColumnToDisplay(raw, x * bands, bands, displayHeight, d32, x, samples, remap);
   }
   offscreenCtx.putImageData(offscreenImageData, 0, 0);
   offscreenDirty = false;
@@ -435,9 +452,7 @@ function renderScene(c: CanvasRenderingContext2D, w: number, h: number) {
   if (hasImage) {
     const imgW = Math.round(w - LPAD - RPAD);
     const imgH = Math.round(h - TPAD - BPAD);
-    // Use high quality scaling only in frequency axis when bands != imgH
-    c.imageSmoothingEnabled = (imgH !== state.bands);
-    c.imageSmoothingQuality = "high";
+    c.imageSmoothingEnabled = false;
     c.drawImage(offscreen!, Math.round(LPAD), Math.round(TPAD), imgW, imgH);
 
     // File name and description
@@ -505,6 +520,7 @@ function renderScene(c: CanvasRenderingContext2D, w: number, h: number) {
   }
 }
 
+let lastCanvasW = 0, lastCanvasH = 0;
 function render() {
   if (!ctx || !canvas) return;
   if (offscreenDirty && offscreenCtx && offscreenImageData) {
@@ -515,10 +531,15 @@ function render() {
   const rect = container.getBoundingClientRect();
   const width = Math.max(0, Math.floor(rect.width));
   const height = Math.max(0, Math.floor(rect.height));
-  canvas.width = width * dpr;
-  canvas.height = height * dpr;
-  canvas.style.width = width + "px";
-  canvas.style.height = height + "px";
+  const cw = width * dpr, ch = height * dpr;
+  if (cw !== lastCanvasW || ch !== lastCanvasH) {
+    canvas.width = cw;
+    canvas.height = ch;
+    canvas.style.width = width + "px";
+    canvas.style.height = height + "px";
+    lastCanvasW = cw;
+    lastCanvasH = ch;
+  }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   renderScene(ctx, width, height);
@@ -544,6 +565,8 @@ async function analyzeCurrent() {
   const rect = container.getBoundingClientRect();
   const availW = Math.max(1, Math.floor(rect.width - LPAD - RPAD));
   const samples = availW;
+  const displayHeight = Math.max(1, Math.floor(rect.height - TPAD - BPAD));
+  state.displayHeight = displayHeight;
   const key = `${state.path}|${state.stream}|${state.channel}|${state.windowFunction}|${state.fftBits}|${samples}|${state.urange}|${state.lrange}|${state.palette}`;
 
   if (cachedKey === key && cachedResult && lastSamples === samples) {
@@ -570,7 +593,8 @@ async function analyzeCurrent() {
   state.magnitudes = new Array(samples * bands).fill(NaN);
   state.error = "";
   // Keep previous frame until new columns arrive - do not clear to black immediately!
-  ensureOffscreen(samples, bands, true);
+  ensureOffscreen(samples, displayHeight, true);
+  rawQuantized = new Uint8Array(samples * bands);
   render();
 
   loadingEl.classList.remove("hidden");
@@ -605,15 +629,17 @@ async function analyzeCurrent() {
         if (p.bands !== bands || !offscreenData32 || !rawQuantized) return;
         const colBase = p.sample * bands;
         const u8 = p.data_u8;
-        const d32 = offscreenData32;
-        const remap = currentRemapLUT;
-        for (let y = 0; y < bands; y++) {
-          const q = u8[y];
-          rawQuantized[colBase + y] = q;
-          const yy = bands - y - 1;
-          d32[yy * samples + p.sample] = remap[q];
+        // Store in full-res rawQuantized
+        if (rawQuantized) {
+          for (let y = 0; y < bands; y++) {
+            rawQuantized[colBase + y] = u8[y];
+          }
         }
-        offscreenDirty = true;
+        // Downsample to display resolution
+        if (offscreenData32 && rawQuantized) {
+          downsampleColumnToDisplay(rawQuantized, colBase, bands, displayHeight, offscreenData32, p.sample, samples, currentRemapLUT);
+          offscreenDirty = true;
+        }
 
         if (!rafScheduled || p.sample + 1 === samples) {
           rafScheduled = true;
@@ -738,7 +764,17 @@ async function saveSpectrogram() {
   exportCanvas.height = saveH;
   const expCtx = exportCanvas.getContext("2d");
   if (expCtx) {
-    renderScene(expCtx, saveW, saveH);
+    const origDisplayH = state.displayHeight;
+    const saveImgH = Math.max(1, Math.floor(saveH - TPAD - BPAD));
+    if (saveImgH !== origDisplayH && rawQuantized && state.samples > 0 && state.bands > 0) {
+      state.displayHeight = saveImgH;
+      rebuildOffscreenFromState();
+      renderScene(expCtx, saveW, saveH);
+      state.displayHeight = origDisplayH;
+      rebuildOffscreenFromState();
+    } else {
+      renderScene(expCtx, saveW, saveH);
+    }
   }
   const dataUrl = exportCanvas.toDataURL("image/png");
   const base64 = dataUrl.split(",")[1];
@@ -942,18 +978,33 @@ window.addEventListener("DOMContentLoaded", async ()=>{
   window.addEventListener("keydown", handleKey);
   canvas.tabIndex=0; canvas.focus(); container.addEventListener("click", ()=> canvas.focus());
 
-  // Resize: debounce 400ms and only recompute if samples changed by >5 or >2%
-  let resizeTimer:number|undefined; let lastW=0;
-  window.addEventListener("resize", ()=>{
+  // Resize: debounce 200ms and recompute if samples changed by >8 or >3%, or re-downsample if height changed
+  let resizeTimer: number | undefined;
+  let lastW = 0;
+  let lastH = 0;
+  window.addEventListener("resize", () => {
     clearTimeout(resizeTimer);
-    resizeTimer=window.setTimeout(()=>{
-      const rect=container.getBoundingClientRect(); const newSamples=Math.max(1, Math.floor(rect.width - LPAD - RPAD));
-      const diff=Math.abs(newSamples - lastW); const pct=lastW? diff/lastW : 1;
-      if(state.path && (diff>8 || pct>0.03)){
-        lastW=newSamples; cachedKey=""; analyzeCurrent();
-      } else if(!state.path) render();
-      else render(); // just re-render without recompute for small resizes
-    }, 400);
+    resizeTimer = window.setTimeout(() => {
+      const rect = container.getBoundingClientRect();
+      const newSamples = Math.max(1, Math.floor(rect.width - LPAD - RPAD));
+      const newDisplayHeight = Math.max(1, Math.floor(rect.height - TPAD - BPAD));
+      const diffW = Math.abs(newSamples - lastW);
+      const pctW = lastW ? diffW / lastW : 1;
+      const diffH = Math.abs(newDisplayHeight - lastH);
+      if (state.path && (diffW > 8 || pctW > 0.03)) {
+        lastW = newSamples;
+        lastH = newDisplayHeight;
+        cachedKey = "";
+        analyzeCurrent();
+      } else if (state.path && diffH > 2) {
+        lastH = newDisplayHeight;
+        state.displayHeight = newDisplayHeight;
+        rebuildOffscreenFromState();
+        render();
+      } else {
+        render();
+      }
+    }, 200);
   });
 
   const overlay=document.getElementById("drop-overlay") as HTMLElement;

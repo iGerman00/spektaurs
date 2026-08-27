@@ -97,7 +97,23 @@ where
             return cached.clone();
         }
     }
-    
+
+    // Strategy: try ffmpeg first (native C/SIMD, 5-10x faster for MP3/FLAC/AAC/OGG)
+    // Fall back to Symphonia only if ffmpeg is not available
+    if let Some(ffmpeg_path) = which_ffmpeg() {
+        if let Ok(info) = try_ffmpeg_decode_streaming(&ffmpeg_path, Path::new(path), stream_index, &is_cancelled, &mut on_progress) {
+            if info.error == AudioError::Ok && !info.pcm.is_empty() {
+                // Cache and return
+                if let Ok(mut cache) = audio_cache().lock() {
+                    if cache.len() >= 4 { cache.clear(); }
+                    cache.insert(cache_key, info.clone());
+                }
+                return info;
+            }
+        }
+    }
+
+    // Fallback: Symphonia (pure Rust, works without ffmpeg installed)
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(_) => {
@@ -557,6 +573,140 @@ fn get_codec_name(params: &symphonia::core::codecs::CodecParameters) -> String {
         s
     }
 }
+/// Fast streaming ffmpeg decoder: spawns ffmpeg as subprocess, reads raw f32le PCM from pipe.
+/// Reports progress via callback. Supports cancellation.
+fn try_ffmpeg_decode_streaming<C, P>(
+    ffmpeg: &str,
+    path: &Path,
+    stream_index: usize,
+    is_cancelled: &C,
+    on_progress: &mut P,
+) -> Result<AudioFileInfo>
+where
+    C: Fn() -> bool,
+    P: FnMut(usize, usize),
+{
+    use std::io::Read;
+
+    // Get metadata via ffprobe first
+    let probe_info = if let Some(fp) = which_ffprobe() {
+        get_ffprobe_info(&fp, path).ok()
+    } else {
+        None
+    };
+
+    let stream_arg = format!("0:a:{}", stream_index);
+    let mut child = std::process::Command::new(ffmpeg)
+        .args(&[
+            "-v", "error",
+            "-i", path.to_str().unwrap_or(""),
+            "-map", &stream_arg,
+            "-f", "f32le",
+            "-acodec", "pcm_f32le",
+            "pipe:1",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| anyhow!("failed to spawn ffmpeg: {}", e))?;
+
+    let mut stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
+
+    let channels = probe_info.as_ref().map(|i| i.channels).unwrap_or(2);
+    let sample_rate = probe_info.as_ref().map(|i| i.sample_rate).unwrap_or(44100) as usize;
+    let duration = probe_info.as_ref().map(|i| i.duration).unwrap_or(0.0);
+    let est_total_samples = if duration > 0.0 && sample_rate > 0 {
+        (duration * sample_rate as f64 * channels as f64) as usize
+    } else {
+        0
+    };
+
+    // Read in 256KB chunks for throughput
+    let mut pcm: Vec<f32> = Vec::with_capacity(est_total_samples.max(sample_rate * channels * 10));
+    let mut buf = vec![0u8; 256 * 1024];
+    let mut leftover = Vec::new();
+    let mut total_read: usize = 0;
+    let mut last_progress: usize = 0;
+
+    loop {
+        if is_cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(anyhow!("cancelled"));
+        }
+
+        let n = stdout.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+
+        // Prepend any leftover bytes from last chunk
+        let data = if leftover.is_empty() {
+            &buf[..n]
+        } else {
+            leftover.extend_from_slice(&buf[..n]);
+            leftover.as_slice()
+        };
+
+        let usable = data.len() / 4 * 4;
+        pcm.reserve(usable / 4);
+        for chunk in data[..usable].chunks_exact(4) {
+            pcm.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+        }
+
+        // Save leftover bytes
+        let remainder = data.len() - usable;
+        if remainder > 0 {
+            let tail = data[usable..].to_vec();
+            leftover = tail;
+        } else {
+            leftover.clear();
+        }
+
+        total_read += n;
+
+        // Report progress every ~1MB
+        if total_read - last_progress > 1024 * 1024 {
+            last_progress = total_read;
+            let decoded_frames = pcm.len() / channels.max(1);
+            let est_frames = est_total_samples / channels.max(1);
+            on_progress(decoded_frames, est_frames);
+        }
+    }
+
+    let _ = child.wait();
+
+    let frames = if channels > 0 { pcm.len() / channels } else { pcm.len() };
+    // Prefer duration computed from actual decoded frames (more accurate, especially for MP3)
+    let final_duration = if sample_rate > 0 && frames > 0 {
+        frames as f64 / sample_rate as f64
+    } else if duration > 0.0 {
+        duration
+    } else {
+        0.0
+    };
+
+    let codec_name = probe_info.as_ref().map(|i| i.codec_name.clone()).unwrap_or_default();
+    let bit_rate = probe_info.as_ref().map(|i| i.bit_rate).unwrap_or(0);
+    let bits_per_sample = probe_info.as_ref().map(|i| i.bits_per_sample).unwrap_or(0);
+
+    if pcm.is_empty() {
+        return Err(anyhow!("ffmpeg produced no output"));
+    }
+
+    Ok(AudioFileInfo {
+        error: AudioError::Ok,
+        codec_name,
+        bit_rate,
+        sample_rate: sample_rate as u32,
+        bits_per_sample,
+        streams: 1, // ffmpeg doesn't easily expose stream count; will be overridden if needed
+        channels,
+        duration: final_duration,
+        pcm,
+        frames,
+    })
+}
 
 struct FfmpegInfo {
     pcm: Vec<f32>,
@@ -810,9 +960,9 @@ mod tests {
             assert!(info.codec_name.to_lowercase().contains("mp3") || info.codec_name.to_lowercase().contains("mpeg"), "codec {}", info.codec_name);
             assert_eq!(info.sample_rate, 44100);
             assert_eq!(info.channels, 2);
-            // Duration for MP3 is slightly more than 0.1 due to frames: 5*1152/44100 ≈0.1306
-            let expected = 5.0 * 1152.0 / 44100.0;
-            assert!((info.duration - expected).abs() < 0.02, "duration {} expected {}", info.duration, expected);
+            // Duration for MP3: Symphonia gives 5*1152/44100≈0.1306 (includes encoder delay),
+            // ffmpeg gives ~0.1 (trims delay). Both are valid.
+            assert!(info.duration > 0.05 && info.duration < 0.20, "duration {} out of range", info.duration);
         }
     }
 
