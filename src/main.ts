@@ -14,6 +14,7 @@ import {
   BPAD,
   LRANGE_DEFAULT,
   URANGE_DEFAULT,
+  RULER,
 } from "./types";
 import { t, setLanguage, applyI18n } from "./i18n";
 import { generatePaletteLUT, generateRemapLUT } from "./palette";
@@ -28,7 +29,7 @@ const state: State = {
   channel: 0,
   windowFunction: "hann",
   fftBits: 11,
-  palette: "spectrum",
+  palette: "sox",
   lrange: LRANGE_DEFAULT,
   urange: URANGE_DEFAULT,
   sampleRate: 0,
@@ -106,12 +107,13 @@ function ensureOffscreen(samples: number, displayHeight: number, keepContent = t
 }
 
 function ensurePaletteStrip(imgH: number) {
-  if (!paletteCanvas || paletteCanvas.height !== imgH) {
+  const palW = RULER;
+  if (!paletteCanvas || paletteCanvas.height !== imgH || paletteCanvas.width !== palW) {
     paletteCanvas = document.createElement("canvas");
-    paletteCanvas.width = 1;
+    paletteCanvas.width = palW;
     paletteCanvas.height = imgH;
     paletteCtx = paletteCanvas.getContext("2d");
-    paletteImageData = paletteCtx ? paletteCtx.createImageData(1, imgH) : null;
+    paletteImageData = paletteCtx ? paletteCtx.createImageData(palW, imgH) : null;
     paletteData32 = paletteImageData ? new Uint32Array(paletteImageData.data.buffer) : null;
   }
   if (!paletteData32 || !paletteCtx || !paletteImageData) return;
@@ -120,7 +122,10 @@ function ensurePaletteStrip(imgH: number) {
   for (let y = 0; y < imgH; y++) {
     const level = 1.0 - (imgH > 1 ? y / (imgH - 1) : 0);
     const lutIdx = Math.max(0, Math.min(1023, Math.floor(level * 1023.0)));
-    paletteData32[y] = palLut[lutIdx];
+    const color = palLut[lutIdx];
+    for (let x = 0; x < palW; x++) {
+      paletteData32[y * palW + x] = color;
+    }
   }
   paletteCtx.putImageData(paletteImageData, 0, 0);
 }

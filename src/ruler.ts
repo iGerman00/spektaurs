@@ -1,156 +1,140 @@
-import { RULER, GAP } from "./types";
+import { GAP } from "./types";
 
-export type Position = "bottom" | "left" | "right";
+export type Position = "top" | "bottom" | "left" | "right";
 
 export class Ruler {
   x: number;
   y: number;
   pos: Position;
-  sample: string;
+  sampleLabel: string;
   factors: number[];
-  minVal: number;
-  maxVal: number;
-  unit: number;
+  minUnits: number;
+  maxUnits: number;
+  spacing: number;
   scale: number;
-  length: number;
-  formatter: (val: number, step: number) => string;
+  offset: number;
+  formatter: (unit: number) => string;
 
   constructor(
     x: number,
     y: number,
     pos: Position,
-    sample: string,
+    sampleLabel: string,
     factors: number[],
-    minVal: number,
-    maxVal: number,
-    unit: number,
+    minUnits: number,
+    maxUnits: number,
+    spacing: number,
     scale: number,
-    length: number,
-    formatter: (val: number, step: number) => string
+    offset: number,
+    formatter: (unit: number) => string
   ) {
     this.x = x;
     this.y = y;
     this.pos = pos;
-    this.sample = sample;
+    this.sampleLabel = sampleLabel;
     this.factors = factors;
-    this.minVal = minVal;
-    this.maxVal = maxVal;
-    this.unit = unit;
+    this.minUnits = minUnits;
+    this.maxUnits = maxUnits;
+    this.spacing = spacing;
     this.scale = scale;
-    this.length = length;
+    this.offset = offset;
     this.formatter = formatter;
   }
 
   draw(c: CanvasRenderingContext2D) {
-    if (this.length <= 0) return;
     c.save();
     c.font = "11px sans-serif";
-    c.fillStyle = "#888";
-    c.strokeStyle = "#444";
+    c.fillStyle = "#aaa";
+    c.strokeStyle = "#888";
     c.lineWidth = 1;
 
-    let textLen = 0;
-    if (this.pos === "bottom") {
-      textLen = c.measureText(this.sample).width;
-    } else {
-      textLen = 14;
-    }
+    // Measure the sample label
+    const metrics = c.measureText(this.sampleLabel);
+    const len = this.pos === "top" || this.pos === "bottom" ? metrics.width : 12;
 
+    // Select the factor to use, we want some space between the labels
     let factor = 0;
     for (const f of this.factors) {
-      factor = f;
-      const cnt = Math.abs((this.maxVal - this.minVal) / (f * this.unit));
-      const textUnits = textLen * cnt;
-      if (textUnits <= this.length) {
+      if (Math.abs(this.scale * f) >= this.spacing * len) {
+        factor = f;
         break;
       }
     }
 
-    const step = factor * this.unit;
-    if (step <= 0) {
-      c.restore();
-      return;
-    }
+    // Draw the boundary ticks
+    this.drawTick(c, this.minUnits);
+    this.drawTick(c, this.maxUnits);
 
-    const first = Math.ceil(this.minVal / step);
-    const last = Math.floor(this.maxVal / step);
-
-    for (let i = first; i <= last; i++) {
-      const val = i * step;
-      const pos = Math.round(this.scale * (val - this.minVal));
-      if (pos < 0 || pos > this.length) continue;
-
-      let tickX = 0, tickY = 0, endX = 0, endY = 0;
-      let textX = 0, textY = 0;
-      let align: CanvasTextAlign = "center";
-      let baseline: CanvasTextBaseline = "middle";
-
-      const tickLen = Math.round(RULER * 0.4);
-
-      if (this.pos === "bottom") {
-        tickX = this.x + pos;
-        tickY = this.y;
-        endX = tickX;
-        endY = tickY + tickLen;
-        textX = tickX;
-        textY = this.y + RULER + 2;
-        align = "center";
-        baseline = "top";
-      } else if (this.pos === "left") {
-        tickX = this.x;
-        tickY = this.y + pos;
-        endX = tickX - tickLen;
-        endY = tickY;
-        textX = this.x - GAP - RULER;
-        textY = tickY;
-        align = "right";
-        baseline = "middle";
-      } else if (this.pos === "right") {
-        tickX = this.x;
-        tickY = this.y + pos;
-        endX = tickX + tickLen;
-        endY = tickY;
-        textX = this.x + RULER + GAP;
-        textY = tickY;
-        align = "left";
-        baseline = "middle";
+    if (factor > 0) {
+      for (let tick = this.minUnits + factor; tick < this.maxUnits; tick += factor) {
+        if (Math.abs(this.scale * (this.maxUnits - tick)) < len * 1.2) {
+          break;
+        }
+        this.drawTick(c, tick);
       }
-
-      // Draw tick line
-      c.beginPath();
-      c.moveTo(tickX + 0.5, tickY + 0.5);
-      c.lineTo(endX + 0.5, endY + 0.5);
-      c.stroke();
-
-      // Draw label
-      c.textAlign = align;
-      c.textBaseline = baseline;
-      const label = this.formatter(val, step);
-      c.fillText(label, textX, textY);
     }
     c.restore();
   }
+
+  private drawTick(c: CanvasRenderingContext2D, tick: number) {
+    const TICK_LEN = 4;
+    const label = this.formatter(tick);
+    const value =
+      this.pos === "top" || this.pos === "bottom"
+        ? tick
+        : this.maxUnits + this.minUnits - tick;
+    const p = Math.round(this.offset + this.scale * (value - this.minUnits));
+
+    if (this.pos === "bottom") {
+      c.textAlign = "center";
+      c.textBaseline = "top";
+      c.fillText(label, this.x + p, this.y + GAP);
+      c.beginPath();
+      c.moveTo(this.x + p + 0.5, this.y);
+      c.lineTo(this.x + p + 0.5, this.y + TICK_LEN);
+      c.stroke();
+    } else if (this.pos === "left") {
+      c.textAlign = "right";
+      c.textBaseline = "middle";
+      c.fillText(label, this.x - GAP, this.y + p);
+      c.beginPath();
+      c.moveTo(this.x, this.y + p + 0.5);
+      c.lineTo(this.x - TICK_LEN, this.y + p + 0.5);
+      c.stroke();
+    } else if (this.pos === "right") {
+      c.textAlign = "left";
+      c.textBaseline = "middle";
+      c.fillText(label, this.x + GAP, this.y + p);
+      c.beginPath();
+      c.moveTo(this.x, this.y + p + 0.5);
+      c.lineTo(this.x + TICK_LEN, this.y + p + 0.5);
+      c.stroke();
+    } else if (this.pos === "top") {
+      c.textAlign = "center";
+      c.textBaseline = "bottom";
+      c.fillText(label, this.x + p, this.y - GAP);
+      c.beginPath();
+      c.moveTo(this.x + p + 0.5, this.y);
+      c.lineTo(this.x + p + 0.5, this.y - TICK_LEN);
+      c.stroke();
+    }
+  }
 }
 
-export const timeFactors = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600];
+export const timeFactors = [1, 2, 5, 10, 15, 30, 60, 2 * 60, 5 * 60, 10 * 60, 15 * 60, 30 * 60, 60 * 60];
 export const freqFactors = [1000, 2000, 5000, 10000, 20000];
 export const densityFactors = [1, 2, 5, 10, 20, 50];
 
-export function timeFormatter(val: number): string {
-  const totalSec = Math.round(Math.max(0, val));
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  if (h > 0) {
-    return `${h}:${m < 10 ? "0" : ""}${m}:${s < 10 ? "0" : ""}${s}`;
-  }
+export function timeFormatter(unit: number): string {
+  const m = Math.floor(unit / 60);
+  const s = Math.floor(unit % 60);
   return `${m}:${s < 10 ? "0" : ""}${s}`;
 }
 
-export function freqFormatter(val: number): string {
-  return `${Math.round(val / 1000)} kHz`;
+export function freqFormatter(unit: number): string {
+  return `${Math.round(unit / 1000)} kHz`;
 }
 
-export function densityFormatter(val: number): string {
-  return `${Math.round(-val)} dB`;
+export function densityFormatter(unit: number): string {
+  return `${Math.round(-unit)} dB`;
 }

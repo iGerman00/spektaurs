@@ -3,49 +3,81 @@ import { Palette } from "./types";
 export function paletteColor(palette: Palette, level: number): number {
   const l = Math.max(0.0, Math.min(1.0, level));
   switch (palette) {
-    case "sox":
-      return soxColor(l);
     case "spectrum":
       return spectrumColor(l);
+    case "sox":
+      return soxColor(l);
     case "mono":
       return monoColor(l);
   }
 }
 
-function soxColor(level: number): number {
-  if (level <= 0.0) return 0x000000;
-  if (level >= 1.0) return 0xffffff;
-  const l = level * 5.0;
-  const i = Math.floor(l);
-  const r = l - i;
-  let rr = 0, gg = 0, bb = 0;
-  switch (i) {
-    case 0: bb = Math.min(1.0, 4.0 * r); break;
-    case 1: rr = Math.min(1.0, 2.0 * r); bb = 1.0 - 0.5 * r; break;
-    case 2: rr = 1.0; bb = 0.5 * (1.0 - r); break;
-    case 3: rr = 1.0; gg = r; break;
-    case 4: rr = 1.0; gg = 1.0; bb = r; break;
-    default: rr = 1.0; gg = 1.0; bb = 1.0; break;
+// Dan Bruton's algorithm (from spek-palette.cc)
+function spectrumColor(level: number): number {
+  const l = level * 0.6625;
+  let r = 0.0, g = 0.0, b = 0.0;
+  if (l >= 0.0 && l < 0.15) {
+    r = (0.15 - l) / (0.15 + 0.075);
+    g = 0.0;
+    b = 1.0;
+  } else if (l >= 0.15 && l < 0.275) {
+    r = 0.0;
+    g = (l - 0.15) / (0.275 - 0.15);
+    b = 1.0;
+  } else if (l >= 0.275 && l < 0.325) {
+    r = 0.0;
+    g = 1.0;
+    b = (0.325 - l) / (0.325 - 0.275);
+  } else if (l >= 0.325 && l < 0.5) {
+    r = (l - 0.325) / (0.5 - 0.325);
+    g = 1.0;
+    b = 0.0;
+  } else if (l >= 0.5 && l < 0.6625) {
+    r = 1.0;
+    g = (0.6625 - l) / (0.6625 - 0.5);
+    b = 0.0;
   }
-  const r_byte = Math.floor(rr * 255.0 + 0.5);
-  const g_byte = Math.floor(gg * 255.0 + 0.5);
-  const b_byte = Math.floor(bb * 255.0 + 0.5);
-  return (r_byte << 16) | (g_byte << 8) | b_byte;
+
+  // Intensity correction
+  let cf = 1.0;
+  if (l >= 0.0 && l < 0.1) {
+    cf = l / 0.1;
+  }
+  cf *= 255.0;
+
+  const rr = Math.floor(r * cf + 0.5);
+  const gg = Math.floor(g * cf + 0.5);
+  const bb = Math.floor(b * cf + 0.5);
+  return (rr << 16) | (gg << 8) | bb;
 }
 
-function spectrumColor(level: number): number {
-  if (level <= 0.0 || level >= 1.0) return 0x000000;
-  let r = 0, g = 0, b = 0;
-  if (level >= 0.13 && level < 0.73) r = Math.sin(((level - 0.13) / 0.60) * Math.PI);
-  if (level >= 0.60 && level < 0.91) g = Math.sin(((level - 0.60) / 0.31) * Math.PI);
-  else if (level >= 0.91) g = (level - 0.91) / 0.09;
-  if (level < 0.60) b = 0.5 * Math.sin((level / 0.60) * Math.PI);
-  else if (level >= 0.78) b = (level - 0.78) / 0.22;
+// Rob Sykes' SoX palette (from spek-palette.cc)
+function soxColor(level: number): number {
+  let r = 0.0;
+  if (level >= 0.13 && level < 0.73) {
+    r = Math.sin(((level - 0.13) / 0.60) * Math.PI / 2.0);
+  } else if (level >= 0.73) {
+    r = 1.0;
+  }
 
-  const r_byte = Math.floor(r * 255.0 + 0.5);
-  const g_byte = Math.floor(g * 255.0 + 0.5);
-  const b_byte = Math.floor(b * 255.0 + 0.5);
-  return (r_byte << 16) | (g_byte << 8) | b_byte;
+  let g = 0.0;
+  if (level >= 0.60 && level < 0.91) {
+    g = Math.sin(((level - 0.60) / 0.31) * Math.PI / 2.0);
+  } else if (level >= 0.91) {
+    g = 1.0;
+  }
+
+  let b = 0.0;
+  if (level < 0.60) {
+    b = 0.5 * Math.sin((level / 0.60) * Math.PI);
+  } else if (level >= 0.78) {
+    b = (level - 0.78) / 0.22;
+  }
+
+  const rr = Math.floor(r * 255.0 + 0.5);
+  const gg = Math.floor(g * 255.0 + 0.5);
+  const bb = Math.floor(b * 255.0 + 0.5);
+  return (rr << 16) | (gg << 8) | bb;
 }
 
 function monoColor(level: number): number {

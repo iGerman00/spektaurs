@@ -134,9 +134,9 @@ export function renderScene(
       timeFactors,
       0,
       state.duration,
-      1.0,
+      1.5,
       imgW / state.duration,
-      imgW,
+      0.0,
       timeFormatter
     ).draw(c);
   }
@@ -150,11 +150,11 @@ export function renderScene(
       "left",
       "00 kHz",
       freqFactors,
-      maxFreq,
       0,
-      1.0,
-      -imgH / maxFreq,
-      imgH,
+      maxFreq,
+      3.0,
+      imgH / maxFreq,
+      0.0,
       freqFormatter
     ).draw(c);
   }
@@ -167,6 +167,8 @@ export function renderScene(
     c.imageSmoothingEnabled = false;
     c.drawImage(paletteCanvas, Math.round(palX), Math.round(TPAD), palW, imgH);
   }
+  c.strokeStyle = "#444";
+  c.lineWidth = 1;
   c.strokeRect(palX + 0.5, TPAD + 0.5, palW, imgH);
 
   new Ruler(
