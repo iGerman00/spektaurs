@@ -1,5 +1,6 @@
 import { State, LPAD, TPAD, RPAD, BPAD, GAP, RULER } from "./types";
 import { Ruler, timeFactors, freqFactors, densityFactors, timeFormatter, freqFormatter, densityFormatter } from "./ruler";
+import { t } from "./i18n";
 
 export function downsampleColumnToDisplay(
   raw: Uint8Array,
@@ -108,6 +109,14 @@ export function renderScene(
   } else {
     c.fillStyle = "#000";
     c.fillRect(LPAD, TPAD, imgW, imgH);
+  }
+
+  if (!state.path) {
+    c.fillStyle = "#888";
+    c.font = "14px sans-serif";
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    c.fillText(t("Drop an audio file here or use File → Open"), LPAD + imgW / 2, TPAD + imgH / 2);
   }
 
   // Spectrogram border

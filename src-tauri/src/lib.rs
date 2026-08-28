@@ -32,6 +32,7 @@ pub fn run() {
             commands::get_default_settings,
             commands::set_default_settings,
             commands::analyze_audio,
+            commands::cancel_pipeline,
             commands::get_audio_info,
             commands::check_version,
             commands::get_available_languages,

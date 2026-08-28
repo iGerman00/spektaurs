@@ -89,6 +89,12 @@ struct ProgressBatchPayload {
 static ANALYSIS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[tauri::command]
+pub fn cancel_pipeline() -> bool {
+    ANALYSIS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    true
+}
+
+#[tauri::command]
 pub async fn analyze_audio(
     window: tauri::Window,
     params: AnalyzeParams,
@@ -164,9 +170,7 @@ pub async fn analyze_audio(
                 };
                 let _ = window_clone.emit("spectrogram-progress-batch", &payload);
             };
-            let mut res = crate::pipeline::run_pipeline_with_batch_emit_cancel(info, wf, fft_bits, samples, channel, stream, emit_batch, is_cancelled);
-            res.magnitudes = vec![];
-            res
+            crate::pipeline::run_pipeline_with_batch_emit_cancel(info, wf, fft_bits, samples, channel, stream, emit_batch, is_cancelled)
         } else {
             crate::pipeline::run_pipeline(info, wf, fft_bits, samples, channel, stream)
         }

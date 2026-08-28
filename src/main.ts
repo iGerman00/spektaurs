@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
@@ -74,7 +73,15 @@ let lastCanvasH = 0;
 
 // ── Offscreen Buffers ──
 function ensureOffscreen(samples: number, displayHeight: number, keepContent = true) {
-  if (offscreen && offscreen.width === samples && offscreen.height === displayHeight) return;
+  if (offscreen && offscreen.width === samples && offscreen.height === displayHeight) {
+    if (!keepContent && offscreenData32) {
+      offscreenData32.fill(0xff000000);
+      if (offscreenCtx && offscreenImageData) {
+        offscreenCtx.putImageData(offscreenImageData, 0, 0);
+      }
+    }
+    return;
+  }
 
   const oldOffscreen = offscreen;
   offscreen = document.createElement("canvas");
@@ -226,7 +233,9 @@ async function analyzeCurrent() {
   cachedKey = key;
 
   const myGen = ++generation;
-  await invoke("cancel_pipeline");
+  try {
+    await invoke("cancel_pipeline");
+  } catch {}
 
   const bands = (1 << state.fftBits) / 2 + 1;
   state.bands = bands;
@@ -254,8 +263,10 @@ async function analyzeCurrent() {
   let renderedSample = 0;
   let receivedSample = 0;
 
+  const win = getCurrentWindow();
+
   try {
-    unlistenDecode = await listen<number>("spectrogram-decode-progress", (ev) => {
+    unlistenDecode = await win.listen<number>("spectrogram-decode-progress", (ev) => {
       if (myGen !== generation) return;
       const p = ev.payload;
       if (loadingText) {
@@ -266,7 +277,7 @@ async function analyzeCurrent() {
 
   if (showPreview) {
     try {
-      unlisten = await listen<ProgressBatchPayload>("spectrogram-progress-batch", (ev) => {
+      unlisten = await win.listen<ProgressBatchPayload>("spectrogram-progress-batch", (ev) => {
         if (myGen !== generation) return;
         const p = ev.payload;
         if (p.bands !== bands || !offscreenData32 || !rawQuantized) return;
@@ -332,9 +343,21 @@ async function analyzeCurrent() {
     state.samples = result.samples;
     state.displayHeight = displayHeight;
 
-    if (!showPreview) {
-      rebuildOffscreenFromState();
+    if (result.magnitudes && result.magnitudes.length === samples * bands) {
+      if (!rawQuantized || rawQuantized.length !== samples * bands) {
+        rawQuantized = new Uint8Array(samples * bands);
+      }
+      for (let i = 0; i < samples * bands; i++) {
+        const v = result.magnitudes[i];
+        if (v === null || v === undefined || typeof v !== "number" || !isFinite(v) || v <= -140.0) {
+          rawQuantized[i] = 0;
+        } else {
+          rawQuantized[i] = Math.max(1, Math.min(255, Math.floor(((Math.min(0, v) + 140.0) / 140.0) * 254.0) + 1));
+        }
+      }
     }
+
+    rebuildOffscreenFromState();
   } catch (e: any) {
     if (myGen === generation) {
       state.error = String(e);
@@ -369,8 +392,11 @@ async function openFileDialog() {
       { name: "All Files", extensions: ["*"] },
     ],
   });
-  if (selected && typeof selected === "string") {
-    await openFile(selected);
+  if (selected) {
+    const filePath = typeof selected === "string" ? selected : (selected as any).path;
+    if (filePath) {
+      await openFile(filePath);
+    }
   }
 }
 
