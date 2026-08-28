@@ -77,7 +77,7 @@ jobs:
           # macOS Universal (Intel + Apple Silicon)
           - os: macos-latest
             platform: 'macos-universal'
-            target: 'universal-apple-darwin'
+            target: 'x86_64-apple-darwin,aarch64-apple-darwin'
             args: '--target universal-apple-darwin'
 
           # Linux x86_64
@@ -87,11 +87,10 @@ jobs:
             args: '--target x86_64-unknown-linux-gnu'
 
           # Linux aarch64 (ARM64)
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04-arm
             platform: 'linux-aarch64'
             target: 'aarch64-unknown-linux-gnu'
             args: '--target aarch64-unknown-linux-gnu'
-            use_qemu: true
 
     steps:
       - name: Checkout repository
@@ -108,33 +107,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install macOS x86_64 and aarch64 targets for universal build
-        if: matrix.target == 'universal-apple-darwin'
-        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
-
-      - name: Install Linux x86_64 dependencies
-        if: matrix.os == 'ubuntu-22.04' && !matrix.use_qemu
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libssl-dev
-
-      - name: Install Linux ARM64 cross dependencies
-        if: matrix.use_qemu
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu qemu-user-static
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update || true
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev:arm64 \
-            libappindicator3-dev:arm64 \
-            librsvg2-dev:arm64 \
-            patchelf:arm64 \
-            libasound2-dev:arm64 \
-            libssl-dev:arm64 || true
-          echo "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -155,9 +132,10 @@ jobs:
   publish-release:
     name: Publish Release
     needs: [create-release, build-tauri]
+    if: always() && needs.create-release.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Publish Draft Release
+      - name: Publish Release
         uses: actions/github-script@v7
         with:
           script: |
