@@ -29,7 +29,6 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "category": "AudioVideo",
     "shortDescription": "Acoustic spectrum analyser",
     "longDescription": "Spek helps you analyse audio files by showing their spectrogram. Supports many audio formats via FFmpeg/symphonia, with interactive spectrogram, rulers, palettes and export.",
     "icon": [
