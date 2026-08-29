@@ -9,54 +9,14 @@ on:
       version:
         description: 'Release version (e.g. v0.8.5)'
         required: false
+        default: 'v0.8.5'
+
 permissions:
   contents: write
 
 jobs:
-  create-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    outputs:
-      release_id: ${{ steps.create-release.outputs.result }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Create Release
-        id: create-release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const tag = context.ref.startsWith('refs/tags/')
-              ? context.ref.replace('refs/tags/', '')
-              : '${{ github.event.inputs.version }}' || `v${require('./package.json').version}`;
-            
-            // Check if release already exists
-            try {
-              const existing = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: tag,
-              });
-              return existing.data.id;
-            } catch (e) {
-              const res = await github.rest.repos.createRelease({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag_name: tag,
-                name: `Spek ${tag}`,
-                body: `### Spek ${tag}\n\nCross-platform acoustic spectrum analyser reimplementation in Rust + Tauri.\n\n#### Download Binaries:\n- **Windows**: \`.msi\` / \`setup.exe\` (x64 / ARM64)\n- **macOS**: \`.dmg\` (Universal Apple Silicon & Intel)\n- **Linux**: \`.AppImage\` / \`.deb\` (x86_64 / ARM64)\n`,
-                draft: true,
-                prerelease: false,
-              });
-              return res.data.id;
-            }
-
   build-tauri:
     name: Build (${{ matrix.platform }})
-    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -127,22 +87,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPIMAGE_EXTRACT_AND_RUN: 1
         with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
+          tagName: ${{ inputs.version || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || 'v0.8.5' }}
+          releaseName: 'Spektaurs ${{ inputs.version || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || 'v0.8.5' }}'
+          releaseBody: 'Cross-platform acoustic spectrum analyser reimplementation in Rust + Tauri.'
+          releaseDraft: false
+          prerelease: false
           args: ${{ matrix.args }}
-
-  publish-release:
-    name: Publish Release
-    needs: [create-release, build-tauri]
-    if: always() && needs.create-release.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Publish Release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: ${{ needs.create-release.outputs.release_id }},
-              draft: false,
-            });
