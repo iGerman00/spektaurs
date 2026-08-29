@@ -48,15 +48,15 @@ fn main() {
         }
     }
     if help {
-        println!("Usage: spek [FILE]");
+        println!("Usage: spektaurs [FILE]");
         println!("  -h, --help     Show this help message");
         println!("  -V, --version  Display the version and exit");
         println!();
-        println!("Spek version {}", env!("CARGO_PKG_VERSION"));
+        println!("Spektaurs version {}", env!("CARGO_PKG_VERSION"));
         std::process::exit(0);
     }
     if version {
-        println!("Spek version {}", env!("CARGO_PKG_VERSION"));
+        println!("Spektaurs version {}", env!("CARGO_PKG_VERSION"));
         std::process::exit(0);
     }
 
