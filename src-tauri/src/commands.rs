@@ -353,7 +353,7 @@ pub fn get_app_info() -> serde_json::Value {
             "Thibault North",
             "Wyatt J. Brown"
         ],
-        "artist": "Olga Vasylevska (Original artwork)",
+        "artist": "Olga Vasylevska (Original Spek artwork) & Karen Rustad Tölva (Ferris the Crab, public domain)",
         "license": "GPL-3.0"
     })
 }
