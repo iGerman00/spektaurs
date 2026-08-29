@@ -59,9 +59,10 @@ export async function openPreferences(
     if (code === curLang) opt.selected = true;
     langSelect.appendChild(opt);
   });
-  if (!Array.from(langSelect.options).some((o) => o.selected) && langSelect.options.length) {
-    langSelect.selectedIndex = 0;
-  }
+  langSelect.onchange = () => {
+    setLanguage(langSelect.value || "en");
+    applyI18n();
+  };
 
   dlg.showModal();
 
@@ -95,8 +96,8 @@ export async function openPreferences(
       state.palette = prefPalette.value as Palette;
       state.lrange = parseInt(prefLow.value);
       state.urange = parseInt(prefHigh.value);
-      onSaved();
     }
+    onSaved();
 
     showToast(t("Preferences") + " saved");
     dlg.removeEventListener("close", handler);

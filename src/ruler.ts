@@ -1,4 +1,5 @@
 import { GAP } from "./types";
+import { t } from "./i18n";
 
 export type Position = "top" | "bottom" | "left" | "right";
 
@@ -132,9 +133,11 @@ export function timeFormatter(unit: number): string {
 }
 
 export function freqFormatter(unit: number): string {
-  return `${Math.round(unit / 1000)} kHz`;
+  const pat = t("%d kHz");
+  return pat.replace("%d", String(Math.round(unit / 1000)));
 }
 
 export function densityFormatter(unit: number): string {
-  return `${Math.round(-unit)} dB`;
+  const pat = t("%d dB");
+  return pat.replace("%d", String(Math.round(-unit)));
 }

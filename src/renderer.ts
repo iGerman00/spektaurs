@@ -59,6 +59,52 @@ export function trimText(c: CanvasRenderingContext2D, text: string, maxW: number
   return text.slice(0, Math.max(0, lo - 1)) + "…";
 }
 
+export function formatStateDesc(state: State): string {
+  if (state.error) {
+    return `${t("Error")}: ${t(state.error)}`;
+  }
+  const items: string[] = [];
+  if (state.codecName) {
+    items.push(state.codecName);
+  }
+  if (state.bitRate > 0) {
+    const kbps = Math.round((state.bitRate + 500) / 1000);
+    const pat = t("%d kbps");
+    items.push(pat.replace("%d", String(kbps)));
+  }
+  if (state.sampleRate > 0) {
+    const pat = t("%d Hz");
+    items.push(pat.replace("%d", String(state.sampleRate)));
+  }
+  if (state.bitsPerSample > 0 && state.bitRate === 0) {
+    const pat = state.bitsPerSample === 1 ? t("%d bit") : t("%d bits");
+    items.push(pat.replace("%d", String(state.bitsPerSample)));
+  }
+  if (state.channels > 0) {
+    if (state.channels === 1) {
+      items.push(t("Mono"));
+    } else if (state.channels === 2) {
+      items.push(t("Stereo"));
+    } else {
+      items.push(`${state.channel + 1} / ${state.channels} ${t("channels")}`);
+    }
+  }
+  if (state.fftBits > 0) {
+    const nfft = 1 << state.fftBits;
+    items.push(`W:${nfft}`);
+    items.push(`F:${state.windowFunction}`);
+  }
+  let desc = items.join(", ");
+  if (state.streams > 1) {
+    const streamPat = t("Stream %d / %d: %s");
+    desc = streamPat
+      .replace("%d", String(state.stream + 1))
+      .replace("%d", String(state.streams))
+      .replace("%s", desc);
+  }
+  return desc || state.desc;
+}
+
 export function renderScene(
   c: CanvasRenderingContext2D,
   w: number,
@@ -90,7 +136,7 @@ export function renderScene(
 
     c.font = "11px sans-serif";
     c.fillStyle = "#bbb";
-    const descText = state.error ? `Error: ${state.error}` : state.desc || "";
+    const descText = formatStateDesc(state);
     c.fillText(trimText(c, descText, topTextW), LPAD, descY);
   }
 
@@ -130,7 +176,7 @@ export function renderScene(
       LPAD,
       TPAD + imgH,
       "bottom",
-      "00:00",
+      t("00:00"),
       timeFactors,
       0,
       state.duration,
@@ -148,7 +194,7 @@ export function renderScene(
       LPAD,
       TPAD,
       "left",
-      "00 kHz",
+      t("00 kHz"),
       freqFactors,
       0,
       maxFreq,
@@ -175,7 +221,7 @@ export function renderScene(
     w - RPAD + GAP + RULER,
     TPAD,
     "right",
-    "-00 dB",
+    t("-00 dB"),
     densityFactors,
     -state.urange,
     -state.lrange,

@@ -67,7 +67,7 @@
         </div>
       </div>
       <div class="shortcuts-hint" id="hint">
-        Keys: <b>C</b>/Shift+<b>C</b> channel &nbsp; <b>S</b>/Shift+<b>S</b> stream &nbsp; <b>F</b>/Shift+<b>F</b> window &nbsp; <b>W</b>/Shift+<b>W</b> DFT size &nbsp; <b>P</b>/Shift+<b>P</b> palette &nbsp; <b>L</b>/Shift+<b>L</b> low &nbsp; <b>U</b>/Shift+<b>U</b> high &nbsp; <b>R</b> / <b>Middle-click</b> reset &nbsp; <b>Scroll</b> low &nbsp; Shift+<b>Scroll</b> high
+        Keys: <b>C</b>/Shift+<b>C</b> channel &nbsp; <b>S</b>/Shift+<b>S</b> stream &nbsp; <b>F</b>/Shift+<b>F</b> window &nbsp; <b>W</b>/Shift+<b>W</b> DFT &nbsp; <b>P</b>/Shift+<b>P</b> palette &nbsp; <b>L</b>/Shift+<b>L</b> low &nbsp; <b>U</b>/Shift+<b>U</b> high &nbsp; <b>R</b> / <b>Middle-click</b> reset &nbsp; <b>Scroll</b> low &nbsp; Shift+<b>Scroll</b> high
       </div>
     </main>
 
@@ -108,20 +108,27 @@
             </div>
             <div class="field field-range">
               <div class="range-col">
-                <label for="pref-low">Low (dB):</label>
+                <label for="pref-low" data-i18n="Low (dB):">Low (dB):</label>
                 <input type="number" id="pref-low" min="-200" max="0" step="1" />
               </div>
               <div class="range-col">
-                <label for="pref-high">High (dB):</label>
+                <label for="pref-high" data-i18n="High (dB):">High (dB):</label>
                 <input type="number" id="pref-high" min="-200" max="0" step="1" />
               </div>
             </div>
           </div>
           <div class="section">
-            <div class="section-title">Export</div>
+            <div class="section-title" data-i18n="Export">Export</div>
             <div class="field">
-              <label for="pref-save-res">Save resolution:</label>
-              <select id="pref-save-res"><option value="window">Window size</option><option value="800x600">800×600</option><option value="1024x768">1024×768</option><option value="1920x1080">1920×1080</option><option value="3840x2160">3840×2160</option><option value="original">Original (samples×bands)</option></select>
+              <label for="pref-save-res" data-i18n="Save resolution:">Save resolution:</label>
+              <select id="pref-save-res">
+                <option value="window" data-i18n="Window size">Window size</option>
+                <option value="800x600">800×600</option>
+                <option value="1024x768">1024×768</option>
+                <option value="1920x1080">1920×1080</option>
+                <option value="3840x2160">3840×2160</option>
+                <option value="original" data-i18n="Original (samples×bands)">Original (samples×bands)</option>
+              </select>
             </div>
           </div>
         </div>
@@ -134,7 +141,7 @@
     <!-- About Dialog -->
     <dialog id="about-dialog" class="dialog">
       <form method="dialog">
-        <h2>About Spektaurs</h2>
+        <h2 data-i18n="About Spektaurs">About Spektaurs</h2>
         <div class="dialog-content about-content">
           <div class="about-header">
             <h3>Spektaurs</h3>
@@ -157,9 +164,9 @@
           </details>
           <details>
             <summary data-i18n="Translators">Translators</summary>
-            <p>34 language translation catalogs included from Spek project.</p>
+            <p data-i18n="34 language translation catalogs included from Spek project.">34 language translation catalogs included from Spek project.</p>
           </details>
-          <p class="license" data-i18n="License: GPL-2.0">License: GPL-3.0</p>
+          <p class="license" data-i18n="License: GPL-3.0">License: GPL-3.0</p>
         </div>
         <div class="dialog-actions">
           <button type="submit" data-i18n="Close">Close</button>
