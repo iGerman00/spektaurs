@@ -251,8 +251,23 @@ export function applyI18n() {
     if (key) el.textContent = t(key);
   });
 
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    const key = el.getAttribute("data-i18n-title");
+    if (key) el.setAttribute("title", t(key));
+  });
+
+  document.querySelectorAll("option[data-i18n]").forEach((el) => {
+    const key = el.getAttribute("data-i18n");
+    if (key) el.textContent = t(key);
+  });
+
+  try {
+    document.title = "Spektaurs - " + t("Acoustic Spectrum Analyser");
+  } catch {}
+
   const hintEl = document.getElementById("hint");
   if (hintEl) {
-    hintEl.innerHTML = `${t("Keys:")} <b>C</b>/Shift+<b>C</b> ${t("channel")} &nbsp; <b>S</b>/Shift+<b>S</b> ${t("stream")} &nbsp; <b>F</b>/Shift+<b>F</b> ${t("window")} &nbsp; <b>W</b>/Shift+<b>W</b> DFT &nbsp; <b>P</b>/Shift+<b>P</b> ${t("palette")} &nbsp; <b>L</b>/Shift+<b>L</b> ${t("low")} &nbsp; <b>U</b>/Shift+<b>U</b> ${t("high")} &nbsp; <b>R</b> / <b>${t("Middle-click")}</b> ${t("reset")} &nbsp; <b>${t("Scroll")}</b> ${t("low")} &nbsp; Shift+<b>${t("Scroll")}</b> ${t("high")}`;
+    const dftLabel = t("DFT") !== "DFT" ? t("DFT") : "DFT";
+    hintEl.innerHTML = `${t("Keys:")} <b>C</b>/Shift+<b>C</b> ${t("channel")} &nbsp; <b>S</b>/Shift+<b>S</b> ${t("stream")} &nbsp; <b>F</b>/Shift+<b>F</b> ${t("window")} &nbsp; <b>W</b>/Shift+<b>W</b> ${dftLabel} &nbsp; <b>P</b>/Shift+<b>P</b> ${t("palette")} &nbsp; <b>L</b>/Shift+<b>L</b> ${t("low")} &nbsp; <b>U</b>/Shift+<b>U</b> ${t("high")} &nbsp; <b>R</b> / <b>${t("Middle-click")}</b> ${t("reset")} &nbsp; <b>${t("Scroll")}</b> ${t("low")} &nbsp; Shift+<b>${t("Scroll")}</b> ${t("high")}`;
   }
 }

@@ -28,23 +28,23 @@
       <div class="menu">
         <span class="menu-title" data-i18n="Help">Help</span>
         <div class="menu-dropdown">
-          <button data-action="about"><span data-i18n="About… (Shift+F1)">About…</span> <span class="shortcut-tag">Shift+F1</span></button>
+          <button data-action="about"><span data-i18n="About…">About…</span> <span class="shortcut-tag">Shift+F1</span></button>
         </div>
       </div>
     </nav>
 
     <!-- Toolbar -->
     <div class="toolbar" id="toolbar">
-      <button class="tool-btn" data-action="open" title="Open audio file (Ctrl/⌘+O)">
+      <button class="tool-btn" data-action="open" title="Open audio file (Ctrl/⌘+O)" data-i18n-title="Open audio file (Ctrl/⌘+O)">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
         <span data-i18n="Open">Open</span>
       </button>
-      <button class="tool-btn" data-action="save" title="Save spectrogram as PNG (Ctrl/⌘+S)">
+      <button class="tool-btn" data-action="save" title="Save spectrogram as PNG (Ctrl/⌘+S)" data-i18n-title="Save spectrogram as PNG (Ctrl/⌘+S)">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
         <span data-i18n="Save">Save</span>
       </button>
       <div class="toolbar-spacer"></div>
-      <button class="tool-btn" data-action="preferences" title="Preferences (Ctrl/⌘+,)">
+      <button class="tool-btn" data-action="preferences" title="Preferences (Ctrl/⌘+,)" data-i18n-title="Preferences (Ctrl/⌘+,)">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         <span data-i18n="Preferences">Preferences</span>
       </button>
@@ -53,7 +53,7 @@
     <!-- Info Bar (update notification) -->
     <div class="info-bar hidden" id="info-bar">
       <span id="info-text" class="info-text" data-i18n="A new version of Spek is available, click to download.">A new version of Spek is available, click to download.</span>
-      <button class="info-close" id="info-close" title="Close">✕</button>
+      <button class="info-close" id="info-close" title="Close" data-i18n-title="Close">✕</button>
     </div>
 
     <!-- Main Canvas Area -->
