@@ -24,7 +24,11 @@ This just about replicates the core original features of Spek while delivering a
 
 Based on: [alexkay/spek](https://github.com/alexkay/spek) - `v0.8.5`, GPL-3.0.
 
-<!-- Screenshots TBD -->
+<div align="center">
+
+![Spektaurs Demo Screenshot](https://github.com/user-attachments/assets/75eb00fd-4172-4298-984b-404f8901c12f)
+
+</div>
 
 ## Differences from Spek
 * Rust and Tauri 2 over C++
