@@ -1,33 +1,42 @@
-# Spektaurs — Rust + Tauri Reimplementation
+# Spektaurs
+> A Rust + Tauri Reimplementation of [Spek](https://www.spek.cc)
 
-> Acoustic Spectrum Analyser — 100% feature-parity, cross-platform, high-performance Rust + Tauri reimplementation of [Spek](https://www.spek.cc/) (original C++/wxWidgets/FFmpeg).
+<div align="center">
 
-Spektaurs helps you analyse audio files by displaying their spectrogram. This reimplementation replicates **all** original features while delivering a blazing-fast, modern cross-platform desktop application powered by [Tauri 2](https://tauri.app/), Rust backend, and Vanilla TypeScript / HTML5 Canvas.
+![Spektaurs Logo](https://raw.githubusercontent.com/iGerman00/spektaurs/main/src-tauri/icons/128x128.png)
 
-Original: [alexkay/spek](https://github.com/alexkay/spek) — `v0.8.5`, GPL-3.0.
 
----
+<!-- badges -->
+[![CI](https://github.com/iGerman00/spektaurs/actions/workflows/ci.yml/badge.svg)](https://github.com/iGerman00/spektaurs/actions/workflows/ci.yml)
+[![Release](https://github.com/iGerman00/spektaurs/actions/workflows/release.yml/badge.svg)](https://github.com/iGerman00/spektaurs/actions/workflows/release.yml)
+[![Latest Release](https://img.shields.io/github/v/release/iGerman00/spektaurs?logo=github&color=blue)](https://github.com/iGerman00/spektaurs/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/iGerman00/spektaurs/latest/total?logo=github&color=2ea44f)](https://github.com/iGerman00/spektaurs/releases/latest)
+[![Platforms](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-22272e?logo=apple&logoColor=white)](https://github.com/iGerman00/spektaurs/releases/latest)
+[![Rust](https://img.shields.io/badge/Rust-1.77+-dea584?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Tauri 2](https://img.shields.io/badge/Tauri-v2-24C8D8?logo=tauri&logoColor=white)](https://tauri.app/)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](https://github.com/iGerman00/spektaurs/blob/main/LICENSE)
 
-## Features & Improvements
+</div>
 
-* 🚀 **Blazing Fast Multithreading**: Rust backend uses [Rayon](https://github.com/rayon-rs/rayon) to parallelize FFT analysis across all available CPU cores.
-* ⚡ **Fluid 165Hz UI & Instant Recoloring**: Dynamic range (`urange`/`lrange`) and palette adjustments recolor in $<2\text{ ms}$ via 32-bit LUTs (`currentRemapLUT`) without re-analyzing audio.
-* 🖥️ **Instant Native Startup & Smooth Resize**: Zero white-flash instant native window initialization, with 60–165 FPS live responsive canvas scaling on window resizing.
-* 📡 **Live Streaming Preview**: Spectrogram progressively renders columns in real time during analysis via batched zero-copy IPC streaming.
-* 🎚️ **Intuitive Dynamic Range & Controls**:
-  * **Mouse Wheel**: Scroll up/down to adjust Lower dB limit (boost or dim quiet signals).
-  * **Shift + Mouse Wheel**: Adjust Upper dB limit (ceiling).
-  * **Middle Click / `R` Key**: Instantly reset dynamic range to defaults (`-120 dB` to `0 dB`).
-  * **Standard Shortcuts**: `Ctrl/⌘ + ,` for Preferences, `Ctrl/⌘ + S` to Save, `Ctrl/⌘ + O` to Open, `Ctrl/⌘ + W` to Close.
-* 📦 **Zero External Dependencies**: Pure-Rust audio decoding engine ([Symphonia](https://github.com/pdeljanov/Symphonia)) is built into the binary; automatically leverages system `ffmpeg` when present.
-* 🖥️ **Full Cross-Platform Support**: Standalone executables and installers for Windows (x64 & ARM64), macOS (Universal Apple Silicon & Intel), and Linux (x86_64 & ARM64 `.deb`, `.rpm`, `.AppImage`).
-* 🎨 **3 Color Palettes**: Exact 1:1 ports of original `SoX` (default), `Spectrum`, and `Mono` palettes.
-* 📐 **Lossless Resolution Exports**: Export at current window size, presets (1080p, 4K, etc.), or exact **Original (samples × bands)** for 1:1 lossless FFT frequency mapping.
-* 🌐 **34 Languages**: Full internationalization catalogs ported from original Spek.
+Spektaurs helps you analyse audio files by displaying their spectrogram.
 
----
+This just about replicates the core original features of Spek while delivering a blazing-fast, modern cross-platform desktop application powered by [Tauri 2](https://tauri.app/), Rust backend, and TypeScript / HTML5 Canvas.
 
-## Parity Matrix
+Based on: [alexkay/spek](https://github.com/alexkay/spek) - `v0.8.5`, GPL-3.0.
+
+<!-- Screenshots TBD -->
+
+## Differences from Spek
+* Rust and Tauri 2 over C++
+* Vanilla TypeScript + HTML5 Canvas over wxWidgets GUI
+* Some extra creature comforts like improved keyboard shortcuts, mouse controls
+* Convenient default configurations for various analysis options
+* Cross-platform and thanks to cargo + Tauri, way easier to build - [Releases](https://github.com/iGerman00/spektaurs/releases/latest) for Windows, macOS, and Linux are up.
+* Basic additional image export settings
+* Added language new language lines for new UI elements
+
+## Parity
+> This is straight from AI, trust at your discretion.
 
 | Original Component (`src/*.cc`) | This Reimplementation | Status |
 |---|---|---|
@@ -40,30 +49,7 @@ Original: [alexkay/spek](https://github.com/alexkay/spek) — `v0.8.5`, GPL-3.0.
 | `spek-preferences.cc` — Preferences persistence (`~/.config/spek/preferences`) | `src-tauri/src/preferences.rs` — XDG config persistence, preferences dialog | ✅ 100% |
 | `spek-utils.cc` — `spek_vercmp` version comparison | `src-tauri/src/utils.rs` — Exact port using `strtol` semantics | ✅ 100% |
 
----
-
-## Keyboard Shortcuts & Mouse Controls
-
-| Shortcut | Action |
-|---|---|
-| `Ctrl/⌘ + O` / `Ctrl/⌘ + N` | Open audio file |
-| `Ctrl/⌘ + S` | Save spectrogram image |
-| `Ctrl/⌘ + ,` | Open Preferences |
-| `Ctrl/⌘ + W` / `Ctrl/⌘ + Q` | Close window |
-| `c` / `Shift + C` | Cycle Next / Prev audio channel |
-| `s` / `Shift + S` | Cycle Next / Prev audio stream |
-| `f` / `Shift + F` | Cycle Next / Prev window function (Hann → Hamming → Blackman-Harris) |
-| `w` / `Shift + W` | Step DFT size up / down (256 to 16,384, default 2,048) |
-| `p` / `Shift + P` | Cycle color palette (SoX → Spectrum → Mono) |
-| `l` / `Shift + L` | Lower dynamic range threshold $\pm 1\text{ dB}$ |
-| `u` / `Shift + U` | Upper dynamic range threshold $\pm 1\text{ dB}$ |
-| `r` / **Middle Click** | Reset dynamic range to defaults ($-120\text{ dB}$ to $0\text{ dB}$) |
-| **Mouse Wheel** | Adjust Lower dB range (scroll up = raise, scroll down = lower) |
-| **Shift + Mouse Wheel** | Adjust Upper dB range |
-
----
-
-## Build & Development
+## Build / Development
 
 ### Prerequisites
 * Rust `1.77+`
@@ -87,19 +73,21 @@ npm run build
 npm run tauri build
 ```
 
----
-
-## Artwork & Credits
+## Artwork / Credits
 
 * **Spek Original Author**: Alexander Kojevnikov & contributors.
 * **Artwork**: 
   * Original Spek logo artwork by **Olga Vasylevska**.
   * Ferris the Crab artwork by **Karen Rustad Tölva** ([rustacean.net](https://www.rustacean.net), Public Domain).
-  * Spektaurs icon design: blended tribute.
+  * Spektaurs icon design: 5 minutes in Photopea by iGerman00.
 * **Palettes**: Rob Sykes (SoX palette), Dan Bruton (Dan Bruton's astronomical spectrum algorithm).
-
----
 
 ## License
 
 GPL-3.0 (same as original Spek). See `LICENSE`.
+
+## AI Disclosure
+
+This project is mostly AI-written.
+
+It's a simple tool, it works. I mostly did this because Spek is somewhat abandoned and macOS is removing support for Intel apps very soon.

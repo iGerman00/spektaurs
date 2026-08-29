@@ -1,7 +1,13 @@
 {
   "name": "spektaurs",
+  "description": "Acoustic Spectrum Analyser - Rust + Tauri reimplementation of Spek",
   "private": true,
   "version": "0.8.5",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iGerman00/spektaurs.git"
+  },
+  "homepage": "https://github.com/iGerman00/spektaurs",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -2,9 +2,10 @@
 name = "spektaurs"
 version = "0.8.5"
 description = "Acoustic spectrum analyser - Rust + Tauri port of Spek"
-authors = ["Spek Contributors"]
+authors = ["Spektaurs Contributors"]
 edition = "2021"
-repository = "https://github.com/alexkay/spek"
+repository = "https://github.com/iGerman00/spektaurs"
+homepage = "https://github.com/iGerman00/spektaurs"
 license = "GPL-3.0"
 rust-version = "1.77"
 

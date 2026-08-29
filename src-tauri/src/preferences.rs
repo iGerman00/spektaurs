@@ -63,9 +63,15 @@ static INSTANCE: OnceLock<Preferences> = OnceLock::new();
 impl Preferences {
     pub fn global() -> &'static Preferences {
         INSTANCE.get_or_init(|| {
-            let path = platform::config_path("spek");
+            let path = platform::config_path("spektaurs");
+            let legacy_path = platform::config_path("spek");
+            let target_path = if !path.exists() && legacy_path.exists() {
+                legacy_path
+            } else {
+                path
+            };
             let prefs = Preferences {
-                path: path.clone(),
+                path: target_path,
                 cache: Mutex::new(PrefsFile::default()),
             };
             prefs.load();

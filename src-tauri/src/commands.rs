@@ -334,7 +334,7 @@ pub fn get_app_info() -> serde_json::Value {
         "version": env!("CARGO_PKG_VERSION"),
         "description": "Acoustic Spectrum Analyser",
         "copyright": "Copyright (c) 2010-2013 Alexander Kojevnikov and contributors. Spektaurs port (c) 2026.",
-        "website": "https://github.com/iGerman00/spek-tauri",
+        "website": "https://github.com/iGerman00/spektaurs",
         "developers": [
             "Alexander Kojevnikov (Original Spek author)",
             "Spektaurs contributors",
