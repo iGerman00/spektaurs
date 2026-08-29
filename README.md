@@ -5,6 +5,12 @@
 
 ![Spektaurs Logo](https://raw.githubusercontent.com/iGerman00/spektaurs/main/src-tauri/icons/128x128.png)
 
+<a href="https://github.com/iGerman00/spektaurs/releases/latest">
+  <img src="https://img.shields.io/badge/Download%20Spektaurs-Latest%20Release-2ea44f?style=for-the-badge&logo=github" height="42" alt="Download Spektaurs">
+</a>
+
+<br />
+<br />
 
 <!-- badges -->
 [![CI](https://github.com/iGerman00/spektaurs/actions/workflows/ci.yml/badge.svg)](https://github.com/iGerman00/spektaurs/actions/workflows/ci.yml)
@@ -25,12 +31,6 @@ This just about replicates the core original features of Spek while delivering a
 Based on: [alexkay/spek](https://github.com/alexkay/spek) - `v0.8.5`, GPL-3.0.
 
 <div align="center">
-
-<a href="https://github.com/iGerman00/spektaurs/releases/latest">
-  <img src="https://img.shields.io/badge/Download%20Spektaurs-Latest%20Release-2ea44f?style=for-the-badge&logo=github" height="42" alt="Download Spektaurs">
-</a>
-
-<br><br>
 
 ![Spektaurs Demo Screenshot](https://github.com/user-attachments/assets/75eb00fd-4172-4298-984b-404f8901c12f)
 
