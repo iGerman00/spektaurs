@@ -330,13 +330,14 @@ pub fn palette_color(palette: String, level: f64) -> u32 {
 #[tauri::command]
 pub fn get_app_info() -> serde_json::Value {
     serde_json::json!({
-        "name": "Spek",
+        "name": "Spektaurs",
         "version": env!("CARGO_PKG_VERSION"),
         "description": "Acoustic Spectrum Analyser",
-        "copyright": "Copyright (c) 2010-2013 Alexander Kojevnikov and contributors",
-        "website": "https://www.spek.cc/",
+        "copyright": "Copyright (c) 2010-2013 Alexander Kojevnikov and contributors. Spektaurs port (c) 2026.",
+        "website": "https://github.com/iGerman00/spek-tauri",
         "developers": [
-            "Alexander Kojevnikov",
+            "Alexander Kojevnikov (Original Spek author)",
+            "Spektaurs contributors",
             "Andreas Cadhalpun",
             "Colin Watson",
             "Daniel Hams",
@@ -352,7 +353,7 @@ pub fn get_app_info() -> serde_json::Value {
             "Thibault North",
             "Wyatt J. Brown"
         ],
-        "artist": "Olga Vasylevska",
+        "artist": "Olga Vasylevska (Original artwork)",
         "license": "GPL-3.0"
     })
 }

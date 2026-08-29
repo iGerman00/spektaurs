@@ -68,6 +68,9 @@ body {
 }
 .menu.open .menu-dropdown { display: flex; flex-direction: column; }
 .menu-dropdown button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   text-align: left;
   background: transparent;
   border: none;
@@ -78,6 +81,7 @@ body {
   font-size: 13px;
 }
 .menu-dropdown button:hover { background: var(--accent); color: white; }
+.shortcut-tag { font-size: 11px; opacity: 0.6; margin-left: 16px; }
 .menu-dropdown .separator { height: 1px; background: #444; margin: 4px 0; }
 
 /* Toolbar */

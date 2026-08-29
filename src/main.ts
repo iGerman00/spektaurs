@@ -580,22 +580,53 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   // Setup Keyboard & Mouse Controls
-  setupKeyboardHandlers(state, () => debouncedAnalyze(), () => scheduleRecolor(), () => resetDynamicRange(), () => openAbout());
-  setupMouseWheelHandlers(container, state, () => debouncedAnalyze(100), () => scheduleRecolor());
+  setupKeyboardHandlers(state, {
+    onAnalyze: () => debouncedAnalyze(),
+    onRecolor: () => scheduleRecolor(),
+    onResetRange: () => resetDynamicRange(),
+    onOpenPreferences: () =>
+      openPreferences(
+        state,
+        () => {
+          rebuildOffscreenFromState();
+          render();
+        },
+        (show) => {
+          if (hintEl) hintEl.classList.toggle("hidden", !show);
+          render();
+        }
+      ),
+    onOpenAbout: () => openAbout(),
+    onSaveImage: () => saveSpectrogram(),
+    onOpenFile: () => openFileDialog(),
+    onCloseWindow: () => getCurrentWindow().close(),
+  });
+  setupMouseWheelHandlers(container, state, () => scheduleRecolor());
   setupMiddleClickReset(container, () => resetDynamicRange());
 
   canvas.tabIndex = 0;
   canvas.focus();
   container.addEventListener("click", () => canvas.focus());
 
-  // Window Resize Handling
-  let resizeTimer: number | undefined;
+  // Window Resize Handling: Instant 60-165 FPS live layout + debounced background pipeline
+  let resizeRafPending = false;
+  let analyzeResizeTimer: number | undefined;
   let lastW = 0;
   let lastH = 0;
 
   window.addEventListener("resize", () => {
-    clearTimeout(resizeTimer);
-    resizeTimer = window.setTimeout(() => {
+    // 1. Instant layout & canvas repaint on every frame
+    if (!resizeRafPending) {
+      resizeRafPending = true;
+      requestAnimationFrame(() => {
+        resizeRafPending = false;
+        render();
+      });
+    }
+
+    // 2. Debounced background re-analysis when resize settles
+    clearTimeout(analyzeResizeTimer);
+    analyzeResizeTimer = window.setTimeout(() => {
       const rect = container.getBoundingClientRect();
       const newSamples = Math.max(1, Math.floor(rect.width - LPAD - RPAD));
       const newDisplayHeight = Math.max(1, Math.floor(rect.height - TPAD - BPAD));
@@ -613,10 +644,8 @@ window.addEventListener("DOMContentLoaded", async () => {
         state.displayHeight = newDisplayHeight;
         rebuildOffscreenFromState();
         render();
-      } else {
-        render();
       }
-    }, 200);
+    }, 150);
   });
 
   // Drag and Drop Handling
@@ -672,4 +701,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   } catch {}
 
   render();
+
+  // Instant Native Reveal: show window immediately after initial render to eliminate blank flashes
+  try {
+    const win = getCurrentWindow();
+    await win.show();
+    await win.setFocus();
+  } catch {}
 });
